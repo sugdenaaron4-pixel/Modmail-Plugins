@@ -1,0 +1,205 @@
+import asyncio
+import discord
+from discord.ext import commands
+
+DEPARTMENTS = {
+    "01": {
+        "name": "General Inquiries",
+        "description": "General questions about services\nPre sales enquiries\nBasic information requests",
+        "wait": None
+    },
+    "02": {
+        "name": "Billing & Finance",
+        "description": "Billing questions\nRefund requests\nPayment issues",
+        "wait": None
+    },
+    "03": {
+        "name": "Public Relations",
+        "description": "Partnership enquiries\nMedia requests\nPublic relations support",
+        "wait": None
+    },
+    "04": {
+        "name": "Legal & Abuse",
+        "description": "Legal reports\nAbuse complaints\nTerms of service violations",
+        "wait": None
+    },
+    "05": {
+        "name": "Senior Management",
+        "description": "Escalated concerns\nManagement review requests",
+        "wait": "12 to 48 hours"
+    },
+    "06": {
+        "name": "Other / Unsure",
+        "description": "General assistance for unclear issues",
+        "wait": None
+    }
+}
+
+
+class Jet2Support(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.color = 0xe02e2e
+
+        self.ticket_departments = {}
+        self.claimed_tickets = set()
+
+    async def send_navigation_embed(self, thread):
+        embed = discord.Embed(
+            title="Support Navigation",
+            description=(
+                "01 General Inquiries\n"
+                "02 Billing & Finance\n"
+                "03 Public Relations\n"
+                "04 Legal & Abuse\n"
+                "05 Senior Management\n"
+                "06 Other / Unsure\n\n"
+                "Reply with the number"
+            ),
+            color=self.color
+        )
+        await thread.recipient.send(embed=embed)
+
+    async def send_department_embed(self, thread, dept_id):
+        data = DEPARTMENTS.get(dept_id)
+
+        if not data:
+            return
+
+        desc = f"You selected {data['name']}\n\n{data['description']}"
+
+        if data["wait"]:
+            desc += f"\n\nWait time: {data['wait']}"
+
+        embed = discord.Embed(
+            title="Department Selected",
+            description=desc,
+            color=self.color
+        )
+
+        await thread.recipient.send(embed=embed)
+
+    async def get_queue_position(self, thread_id, dept_id):
+        active = []
+
+        for thread in self.bot.threads.cache.values():
+            if getattr(thread, "closed", False):
+                continue
+
+            if thread.id in self.claimed_tickets:
+                continue
+
+            if self.ticket_departments.get(thread.id) != dept_id:
+                continue
+
+            active.append(thread.id)
+
+        active.sort()
+
+        try:
+            return active.index(thread_id) + 1
+        except ValueError:
+            return 1
+
+    async def send_queue_update(self, thread, dept_id):
+        if thread.id in self.claimed_tickets:
+            return
+
+        pos = await self.get_queue_position(thread.id, dept_id)
+
+        suffix = "th"
+        if pos == 1:
+            suffix = "st"
+        elif pos == 2:
+            suffix = "nd"
+        elif pos == 3:
+            suffix = "rd"
+
+        embed = discord.Embed(
+            title="Queue Update",
+            description=f"You are {pos}{suffix} in {DEPARTMENTS[dept_id]['name']}",
+            color=self.color
+        )
+
+        await thread.recipient.send(embed=embed)
+
+    async def update_department_queue(self, dept_id):
+        for thread in self.bot.threads.cache.values():
+            if getattr(thread, "closed", False):
+                continue
+
+            if thread.id in self.claimed_tickets:
+                continue
+
+            if self.ticket_departments.get(thread.id) != dept_id:
+                continue
+
+            try:
+                await self.send_queue_update(thread, dept_id)
+            except:
+                pass
+
+    @commands.Cog.listener()
+    async def on_thread_create(self, thread):
+        await asyncio.sleep(1)
+        await self.send_navigation_embed(thread)
+
+    @commands.Cog.listener()
+    async def on_thread_reply(self, thread, from_mod, message, anonymous, plain):
+        if from_mod:
+            return
+
+        if thread.id in self.ticket_departments:
+            return
+
+        raw = message.content.strip()
+
+        try:
+            dept_id = f"{int(raw):02d}"
+        except:
+            return
+
+        if dept_id not in DEPARTMENTS:
+            return
+
+        self.ticket_departments[thread.id] = dept_id
+
+        await self.send_department_embed(thread, dept_id)
+        await self.update_department_queue(dept_id)
+
+    @commands.Cog.listener()
+    async def on_thread_close(self, thread, closer, silent, delete_channel):
+        dept_id = self.ticket_departments.get(thread.id)
+
+        if dept_id:
+            await asyncio.sleep(2)
+            await self.update_department_queue(dept_id)
+
+    @commands.command(name="claim")
+    async def claim(self, ctx):
+        thread = getattr(ctx, "thread", None)
+
+        if not thread:
+            return
+
+        if thread.id in self.claimed_tickets:
+            return
+
+        self.claimed_tickets.add(thread.id)
+
+        embed = discord.Embed(
+            title="Ticket Claimed",
+            description=f"Claimed by {ctx.author.mention}",
+            color=self.color
+        )
+
+        try:
+            await thread.recipient.send(embed=embed)
+        except:
+            pass
+
+        await ctx.send("Claimed")
+
+
+async def setup(bot):
+    await bot.add_cog(Jet2Support(bot))
