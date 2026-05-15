@@ -14,15 +14,20 @@ DEPARTMENTS = {
 
 
 class Jet2Support(commands.Cog):
+
     def __init__(self, bot):
+
         self.bot = bot
-        self.color = 0xe02e2e
+        self.color = 0x2b2d31
 
         self.ticket_departments = {}
         self.claimed_tickets = set()
         self.claim_messages_sent = set()
 
-    async def send_navigation_embed(self, thread):
+    async def send_navigation_embed(
+        self,
+        thread
+    ):
 
         embed = discord.Embed(
             title="ᴀ Support Navigation",
@@ -40,7 +45,9 @@ class Jet2Support(commands.Cog):
             color=self.color
         )
 
-        await thread.recipient.send(embed=embed)
+        await thread.recipient.send(
+            embed=embed
+        )
 
     async def send_department_embed(
         self,
@@ -165,13 +172,19 @@ class Jet2Support(commands.Cog):
             ) != department_id:
                 continue
 
-            active.append(thread.id)
+            active.append(thread)
 
-        active.sort()
+        # oldest ticket first
+        active.sort(
+            key=lambda t: t.channel.created_at
+        )
 
         try:
+
+            ids = [t.id for t in active]
+
             return (
-                active.index(thread_id) + 1
+                ids.index(thread_id) + 1
             )
 
         except ValueError:
@@ -317,10 +330,8 @@ class Jet2Support(commands.Cog):
         delete_channel
     ):
 
-        department_id = (
-            self.ticket_departments.get(
-                thread.id
-            )
+        department_id = self.ticket_departments.get(
+            thread.id
         )
 
         if department_id:
@@ -331,73 +342,94 @@ class Jet2Support(commands.Cog):
                 department_id
             )
 
-    @commands.Cog.listener()
-    async def on_message(
+    @commands.command(
+        name="claim"
+    )
+    async def claim_ticket(
         self,
-        message
+        ctx
     ):
 
-        if message.author.bot:
+        try:
+
+            thread = await self.bot.threads.find(
+                ctx.channel
+            )
+
+        except Exception:
             return
 
-        if not message.guild:
+        if not thread:
             return
 
-        if message.content.lower().startswith(
-            ".claim"
-        ):
+        if thread.id in self.claim_messages_sent:
+            return
 
-            try:
+        department_id = self.ticket_departments.get(
+            thread.id,
+            "06"
+        )
 
-                thread = await self.bot.threads.find(
-                    message.channel
-                )
+        self.claimed_tickets.add(
+            thread.id
+        )
 
-            except Exception:
-                return
+        self.claim_messages_sent.add(
+            thread.id
+        )
 
-            if not thread:
-                return
+        embed = discord.Embed(
+            title="🎉 You've Been Connected with a Support Agent",
+            description=(
+                f"Great news! A member of the "
+                f"**{DEPARTMENTS[department_id]}** "
+                f"support team has joined your ticket.\n\n"
 
-            if thread.id in self.claim_messages_sent:
-                return
+                "━━━━━━━━━━━━━━━━━━\n\n"
 
-            self.claimed_tickets.add(
-                thread.id
+                f"👤 **Your Support Agent**\n"
+                f"{ctx.author.mention} — "
+                f"`{ctx.author.name}`\n\n"
+
+                "━━━━━━━━━━━━━━━━━━\n\n"
+
+                "◈ Your agent is reviewing your issue now and will respond shortly.\n"
+                "◈ Please feel free to provide any additional information that may help.\n"
+                "◈ If you have screenshots or logs, you are welcome to share them here.\n\n"
+
+                "━━━━━━━━━━━━━━━━━━\n\n"
+
+                "Thank you for your patience.\n"
+                "> <:Jet2_Holidays:1501627858358112306> "
+                "Package Holidays, You can Trust"
+            ),
+            color=self.color
+        )
+
+        embed.set_thumbnail(
+            url=ctx.author.display_avatar.url
+        )
+
+        embed.set_footer(
+            text="Jet2Support • Support Team Connected"
+        )
+
+        try:
+
+            await thread.recipient.send(
+                embed=embed
             )
 
-            self.claim_messages_sent.add(
-                thread.id
+            await ctx.message.add_reaction(
+                "✅"
             )
 
-            embed = discord.Embed(
-                title="ᴀ Connected with Support",
-                description=(
-                    "A member of the "
-                    "**Jet2Support** "
-                    "team has claimed "
-                    "your ticket.\n\n"
-                    f"👤 Support Agent: "
-                    f"{message.author.mention}\n\n"
-                    "They will assist "
-                    "you shortly."
-                ),
-                color=self.color
+            await self.update_department_queue(
+                department_id
             )
 
-            embed.set_thumbnail(
-                url=message.author
-                .display_avatar.url
-            )
-
-            try:
-
-                await thread.recipient.send(
-                    embed=embed
-                )
-
-            except Exception:
-                pass
+        except Exception:
+            pass
 
 
 async def setup(bot):
