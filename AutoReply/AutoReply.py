@@ -251,7 +251,7 @@ class Jet2Support(commands.Cog):
                 self.bot_ref.claimed_tickets.discard(self.thread_ref.id)
                 self.bot_ref.claim_messages_sent.discard(self.thread_ref.id)
                 try:
-                    await self.thread_ref.close()
+                    await self.thread_ref.close(closer=bot_ref.bot.user)
                     await self.bot_ref.update_department_queue(self.dept_id)
                     await interaction.response.send_message("✅ Ticket closed successfully.", ephemeral=True)
                 except Exception as e:
@@ -264,7 +264,7 @@ class Jet2Support(commands.Cog):
                 self.stop()
 
         embed = discord.Embed(
-            title="ᴀ Ticket Close Request",
+            title="Ticket Close Request",
             description=(
                 "A member of the **Jet2Support** support team has requested to\n**close your ticket.**\n\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
