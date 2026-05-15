@@ -1,5 +1,4 @@
 import asyncio
-
 import discord
 from discord.ext import commands
 
@@ -12,25 +11,19 @@ DEPARTMENTS = {
     "06": "Other / Unsure"
 }
 
-
 class Jet2Support(commands.Cog):
 
     def __init__(self, bot):
-
         self.bot = bot
-
-        # RED THEME
-        self.color = 0xe02e2e
-
+        self.color = 0xe02e2e  # RED THEME
         self.ticket_departments = {}
         self.claimed_tickets = set()
         self.claim_messages_sent = set()
 
-    async def send_navigation_embed(
-        self,
-        thread
-    ):
-
+    # --------------------
+    # Navigation & Department
+    # --------------------
+    async def send_navigation_embed(self, thread):
         embed = discord.Embed(
             title="ᴀ Support Navigation",
             description=(
@@ -46,410 +39,227 @@ class Jet2Support(commands.Cog):
             ),
             color=self.color
         )
+        await thread.recipient.send(embed=embed)
 
-        await thread.recipient.send(
-            embed=embed
-        )
-
-    async def send_department_embed(
-        self,
-        thread,
-        department_id
-    ):
-
-        if department_id == "01":
-
-            description = (
-                "You have been connected to "
-                "**General Inquiries**.\n\n"
-                "A support agent will assist "
-                "you shortly."
-            )
-
-        elif department_id == "02":
-
-            description = (
-                "You have been connected to "
-                "**Billing & Finance**.\n\n"
-                "A finance team member will "
-                "assist you shortly."
-            )
-
-        elif department_id == "03":
-
-            description = (
-                "You have been connected to "
-                "**Public Relations**.\n\n"
-                "A PR team member will "
-                "assist you shortly."
-            )
-
-        elif department_id == "04":
-
-            description = (
-                "You have been connected to "
-                "**Legal & Abuse**.\n\n"
-                "A legal team member will "
-                "review your case shortly."
-            )
-
-        elif department_id == "05":
-
-            description = (
-                "You have been connected to "
-                "**Senior Management**.\n\n"
-                "Estimated wait time:\n"
-                "**12 to 48 hours**."
-            )
-
-        elif department_id == "06":
-
-            description = (
-                "You have been connected to "
-                "**Other / Unsure**.\n\n"
-                "A support agent will "
-                "direct your ticket shortly."
-            )
-
-        else:
+    async def send_department_embed(self, thread, department_id):
+        descriptions = {
+            "01": "You have been connected to **General Inquiries**.\n\nA support agent will assist you shortly.",
+            "02": "You have been connected to **Billing & Finance**.\n\nA finance team member will assist you shortly.",
+            "03": "You have been connected to **Public Relations**.\n\nA PR team member will assist you shortly.",
+            "04": "You have been connected to **Legal & Abuse**.\n\nA legal team member will review your case shortly.",
+            "05": "You have been connected to **Senior Management**.\n\nEstimated wait time:\n**12 to 48 hours**.",
+            "06": "You have been connected to **Other / Unsure**.\n\nA support agent will direct your ticket shortly."
+        }
+        if department_id not in descriptions:
             return
+        embed = discord.Embed(title="ᴀ Department Selected", description=descriptions[department_id], color=self.color)
+        await thread.recipient.send(embed=embed)
 
-        embed = discord.Embed(
-            title="ᴀ Department Selected",
-            description=description,
-            color=self.color
-        )
-
-        await thread.recipient.send(
-            embed=embed
-        )
-
-    async def send_staff_department_log(
-        self,
-        thread,
-        department_id,
-        user
-    ):
-
-        channel = thread.channel
-
+    async def send_staff_department_log(self, thread, department_id, user):
         embed = discord.Embed(
             title="📂 Department Selected",
-            description=(
-                f"User: {user.mention}\n"
-                f"Department: "
-                f"**{DEPARTMENTS[department_id]}**\n"
-                f"Selection Code: "
-                f"`{department_id}`"
-            ),
+            description=f"User: {user.mention}\nDepartment: **{DEPARTMENTS[department_id]}**\nSelection Code: `{department_id}`",
             color=self.color
         )
+        await thread.channel.send(embed=embed)
 
-        await channel.send(
-            embed=embed
-        )
-
-    async def get_queue_position(
-        self,
-        thread_id,
-        department_id
-    ):
-
+    # --------------------
+    # Queue System
+    # --------------------
+    async def get_queue_position(self, thread_id, department_id):
         active = []
-
         for thread in self.bot.threads.cache.values():
-
-            if getattr(
-                thread,
-                "closed",
-                False
-            ):
+            if getattr(thread, "closed", False):
                 continue
-
             if thread.id in self.claimed_tickets:
                 continue
-
-            if self.ticket_departments.get(
-                thread.id
-            ) != department_id:
+            if self.ticket_departments.get(thread.id) != department_id:
                 continue
-
             active.append(thread)
-
-        # oldest ticket first
-        active.sort(
-            key=lambda t: t.channel.created_at
-        )
-
+        # Sort by oldest ticket first
+        active.sort(key=lambda t: t.channel.created_at)
         try:
-
             ids = [t.id for t in active]
-
-            return (
-                ids.index(thread_id) + 1
-            )
-
+            return ids.index(thread_id) + 1
         except ValueError:
             return 1
 
-    async def send_queue_update(
-        self,
-        thread,
-        department_id
-    ):
-
+    async def send_queue_update(self, thread, department_id):
         if thread.id in self.claimed_tickets:
             return
-
-        position = await self.get_queue_position(
-            thread.id,
-            department_id
-        )
-
-        suffix = "th"
-
-        if position == 1:
-            suffix = "st"
-
-        elif position == 2:
-            suffix = "nd"
-
-        elif position == 3:
-            suffix = "rd"
-
+        position = await self.get_queue_position(thread.id, department_id)
+        suffix = "th" if position > 3 else ["st", "nd", "rd"][position-1]
         embed = discord.Embed(
             title="📋 Queue Update",
-            description=(
-                f"You are currently "
-                f"**{position}{suffix}** "
-                f"in the "
-                f"**{DEPARTMENTS[department_id]}** "
-                f"queue."
-            ),
+            description=f"You are currently **{position}{suffix}** in the **{DEPARTMENTS[department_id]}** queue.",
             color=self.color
         )
+        await thread.recipient.send(embed=embed)
 
-        await thread.recipient.send(
-            embed=embed
-        )
-
-    async def update_department_queue(
-        self,
-        department_id
-    ):
-
+    async def update_department_queue(self, department_id):
         for thread in self.bot.threads.cache.values():
-
-            if getattr(
-                thread,
-                "closed",
-                False
-            ):
+            if getattr(thread, "closed", False):
                 continue
-
             if thread.id in self.claimed_tickets:
                 continue
-
-            if self.ticket_departments.get(
-                thread.id
-            ) != department_id:
+            if self.ticket_departments.get(thread.id) != department_id:
                 continue
-
             try:
-
-                await self.send_queue_update(
-                    thread,
-                    department_id
-                )
-
+                await self.send_queue_update(thread, department_id)
             except Exception:
                 pass
 
+    # --------------------
+    # Listeners
+    # --------------------
     @commands.Cog.listener()
-    async def on_thread_create(
-        self,
-        thread
-    ):
-
+    async def on_thread_create(self, thread):
         await asyncio.sleep(1)
-
-        await self.send_navigation_embed(
-            thread
-        )
+        await self.send_navigation_embed(thread)
 
     @commands.Cog.listener()
-    async def on_thread_reply(
-        self,
-        thread,
-        from_mod,
-        message,
-        anonymous,
-        plain
-    ):
-
+    async def on_thread_reply(self, thread, from_mod, message, anonymous, plain):
         if from_mod:
             return
-
         if thread.id in self.ticket_departments:
             return
-
-        content = (
-            message.content
-            .strip()
-            .zfill(2)
-        )
-
+        content = message.content.strip().zfill(2)
         if content not in DEPARTMENTS:
             return
-
-        self.ticket_departments[
-            thread.id
-        ] = content
-
-        await self.send_department_embed(
-            thread,
-            content
-        )
-
-        await self.send_staff_department_log(
-            thread,
-            content,
-            message.author
-        )
-
+        self.ticket_departments[thread.id] = content
+        await self.send_department_embed(thread, content)
+        await self.send_staff_department_log(thread, content, message.author)
         await asyncio.sleep(1)
-
-        await self.update_department_queue(
-            content
-        )
+        await self.update_department_queue(content)
 
     @commands.Cog.listener()
-    async def on_thread_close(
-        self,
-        thread,
-        closer,
-        silent,
-        delete_channel
-    ):
-
-        department_id = self.ticket_departments.get(
-            thread.id
-        )
-
+    async def on_thread_close(self, thread, closer, silent, delete_channel):
+        department_id = self.ticket_departments.get(thread.id)
         if department_id:
-
             await asyncio.sleep(2)
+            await self.update_department_queue(department_id)
 
-            await self.update_department_queue(
-                department_id
-            )
-
-    @commands.command(
-        name="claim"
-    )
-    async def claim_ticket(
-        self,
-        ctx
-    ):
-
-        # FIND CURRENT MODMAIL THREAD
-        thread = await self.bot.threads.find(
-            recipient=None,
-            channel=ctx.channel
-        )
-
+    # --------------------
+    # Commands
+    # --------------------
+    @commands.command(name="claim")
+    async def claim_ticket(self, ctx):
+        thread = await self.bot.threads.find(recipient=None, channel=ctx.channel)
         if thread is None:
-
-            await ctx.send(
-                "❌ This command can only be used inside a Modmail ticket."
-            )
-
+            await ctx.send("❌ This command can only be used inside a Modmail ticket.")
             return
-
-        # ALREADY CLAIMED
         if thread.id in self.claim_messages_sent:
-
-            await ctx.message.add_reaction(
-                "⚠️"
-            )
-
+            await ctx.message.add_reaction("⚠️")
             return
-
-        department_id = self.ticket_departments.get(
-            thread.id,
-            "06"
-        )
-
-        self.claimed_tickets.add(
-            thread.id
-        )
-
-        self.claim_messages_sent.add(
-            thread.id
-        )
-
+        department_id = self.ticket_departments.get(thread.id, "06")
+        self.claimed_tickets.add(thread.id)
+        self.claim_messages_sent.add(thread.id)
         embed = discord.Embed(
             title="🎉 You've Been Connected with a Support Agent",
             description=(
-                f"Great news! A member of the "
-                f"**{DEPARTMENTS[department_id]}** "
-                f"support team has joined your ticket.\n\n"
-
+                f"Great news! A member of the **{DEPARTMENTS[department_id]}** support team has joined your ticket.\n\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
-
-                f"👤 **Your Support Agent**\n"
-                f"{ctx.author.mention} — "
-                f"`{ctx.author.name}`\n\n"
-
+                f"👤 **Your Support Agent**\n{ctx.author.mention} — `{ctx.author.name}`\n\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
-
                 "◈ Your agent is reviewing your issue now and will respond shortly.\n"
                 "◈ Please feel free to provide any additional information that may help.\n"
                 "◈ If you have screenshots or logs, you are welcome to share them here.\n\n"
-
                 "━━━━━━━━━━━━━━━━━━\n\n"
-
                 "Thank you for your patience.\n"
-                "> <:Jet2_Holidays:1501627858358112306> "
-                "Package Holidays, You can Trust"
+                "> <:Jet2_Holidays:1501627858358112306> Package Holidays, You can Trust"
             ),
             color=self.color
         )
-
-        embed.set_thumbnail(
-            url=ctx.author.display_avatar.url
-        )
-
-        embed.set_footer(
-            text="Jet2Support • Support Team Connected"
-        )
-
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_footer(text="Jet2Support • Support Team Connected")
         try:
-
-            # SEND DM TO USER
-            await thread.recipient.send(
-                embed=embed
-            )
-
-            # REACT SUCCESS
-            await ctx.message.add_reaction(
-                "✅"
-            )
-
-            # UPDATE QUEUE
-            await self.update_department_queue(
-                department_id
-            )
-
+            await thread.recipient.send(embed=embed)
+            await ctx.message.add_reaction("✅")
+            await self.update_department_queue(department_id)
         except Exception as e:
+            await ctx.send(f"❌ Failed to send claim message:\n```{e}```")
 
-            await ctx.send(
-                f"❌ Failed to send claim message:\n```{e}```"
+    @commands.command(name="transfer")
+    async def transfer_ticket(self, ctx, department_id: str = None):
+        thread = await self.bot.threads.find(recipient=None, channel=ctx.channel)
+        if thread is None:
+            await ctx.send("❌ This command can only be used inside a Modmail ticket.")
+            return
+        if department_id is None:
+            embed = discord.Embed(
+                title="📂 Transfer Ticket",
+                description=(
+                    "Select a department using:\n`.transfer <department>`\n\n"
+                    "**01** ▸ General Inquiries\n"
+                    "**02** ▸ Billing & Finance\n"
+                    "**03** ▸ Public Relations\n"
+                    "**04** ▸ Legal & Abuse\n"
+                    "**05** ▸ Senior Management\n"
+                    "**06** ▸ Other / Unsure"
+                ),
+                color=self.color
             )
+            await ctx.send(embed=embed)
+            return
+        department_id = department_id.strip().zfill(2)
+        if department_id not in DEPARTMENTS:
+            await ctx.send("❌ Invalid department number.")
+            return
+        old_department = self.ticket_departments.get(thread.id, "06")
+        self.ticket_departments[thread.id] = department_id
+        self.claimed_tickets.discard(thread.id)
+        self.claim_messages_sent.discard(thread.id)
+        # USER EMBED
+        user_embed = discord.Embed(
+            title="📂 Ticket Transferred",
+            description=f"Your ticket has been transferred to:\n\n**{DEPARTMENTS[department_id]}**\n\nA new support agent will assist you shortly.",
+            color=self.color
+        )
+        # STAFF EMBED
+        staff_embed = discord.Embed(
+            title="✅ Ticket Transferred",
+            description=f"Transferred from:\n**{DEPARTMENTS[old_department]}**\n\nTransferred to:\n**{DEPARTMENTS[department_id]}**",
+            color=self.color
+        )
+        try:
+            await thread.recipient.send(embed=user_embed)
+        except:
+            pass
+        await ctx.send(embed=staff_embed)
+        await self.update_department_queue(old_department)
+        await self.update_department_queue(department_id)
 
+    # --------------------
+    # Request Close Command
+    # --------------------
+    @commands.command(name="requestclose", aliases=["closerequest"])
+    async def request_close(self, ctx):
+        thread = await self.bot.threads.find(recipient=None, channel=ctx.channel)
+        if thread is None:
+            await ctx.send("❌ This command can only be used inside a Modmail ticket.")
+            return
+        embed = discord.Embed(
+            title="ᴀ Ticket Close Request",
+            description=(
+                "A member of the **Jet2Support** support team has requested to\n**close your ticket.**\n\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"👤 **Requested By**\n{ctx.author.mention} — `{ctx.author.name}`\n\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                "◈ If your issue has been **fully resolved**, please click **Accept & Close.**\n"
+                "◈ If you still need assistance, click **Deny & Stay Open.**\n"
+                "◈ No action needed if you'd like more time — the request will expire after 5 minutes.\n\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                "Thank you for choosing **Jet2Support.**"
+            ),
+            color=self.color
+        )
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_footer(text="Jet2Support • This request expires in 5 minutes")
+        try:
+            await thread.recipient.send(embed=embed)
+            await ctx.message.add_reaction("✅")
+        except Exception as e:
+            await ctx.send(f"❌ Failed to send close request:\n```{e}```")
 
 async def setup(bot):
-
-    await bot.add_cog(
-        Jet2Support(bot)
-    )
+    await bot.add_cog(Jet2Support(bot))
