@@ -1,6 +1,7 @@
 import asyncio
 import discord
 from discord.ext import commands
+from discord.ui import View, Button
 
 DEPARTMENTS = {
     "01": "General Inquiries",
@@ -209,13 +210,11 @@ class Jet2Support(commands.Cog):
         self.ticket_departments[thread.id] = department_id
         self.claimed_tickets.discard(thread.id)
         self.claim_messages_sent.discard(thread.id)
-        # USER EMBED
         user_embed = discord.Embed(
             title="📂 Ticket Transferred",
             description=f"Your ticket has been transferred to:\n\n**{DEPARTMENTS[department_id]}**\n\nA new support agent will assist you shortly.",
             color=self.color
         )
-        # STAFF EMBED
         staff_embed = discord.Embed(
             title="✅ Ticket Transferred",
             description=f"Transferred from:\n**{DEPARTMENTS[old_department]}**\n\nTransferred to:\n**{DEPARTMENTS[department_id]}**",
@@ -230,7 +229,7 @@ class Jet2Support(commands.Cog):
         await self.update_department_queue(department_id)
 
     # --------------------
-    # Request Close Command
+    # Request Close with Buttons
     # --------------------
     @commands.command(name="requestclose", aliases=["closerequest"])
     async def request_close(self, ctx):
@@ -238,6 +237,22 @@ class Jet2Support(commands.Cog):
         if thread is None:
             await ctx.send("❌ This command can only be used inside a Modmail ticket.")
             return
+
+        class CloseRequestView(View):
+            def __init__(self, timeout=300):
+                super().__init__(timeout=timeout)
+
+            @discord.ui.button(label="Accept & Close", style=discord.ButtonStyle.green)
+            async def accept(self, interaction: discord.Interaction, button: Button):
+                await interaction.response.send_message("✅ Ticket closed. Thank you!", ephemeral=True)
+                await thread.close()
+                self.stop()  # Stop the view
+
+            @discord.ui.button(label="Deny & Stay Open", style=discord.ButtonStyle.red)
+            async def deny(self, interaction: discord.Interaction, button: Button):
+                await interaction.response.send_message("❌ Close request denied. Ticket remains open.", ephemeral=True)
+                self.stop()  # Stop the view
+
         embed = discord.Embed(
             title="ᴀ Ticket Close Request",
             description=(
@@ -245,7 +260,7 @@ class Jet2Support(commands.Cog):
                 "━━━━━━━━━━━━━━━━━━\n\n"
                 f"👤 **Requested By**\n{ctx.author.mention} — `{ctx.author.name}`\n\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
-                "◈ If your issue has been **fully resolved**, please click **Accept & Close.**\n"
+                "◈ If your issue has been **fully resolved**, click **Accept & Close.**\n"
                 "◈ If you still need assistance, click **Deny & Stay Open.**\n"
                 "◈ No action needed if you'd like more time — the request will expire after 5 minutes.\n\n"
                 "━━━━━━━━━━━━━━━━━━\n\n"
@@ -256,7 +271,7 @@ class Jet2Support(commands.Cog):
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
         embed.set_footer(text="Jet2Support • This request expires in 5 minutes")
         try:
-            await thread.recipient.send(embed=embed)
+            await thread.recipient.send(embed=embed, view=CloseRequestView())
             await ctx.message.add_reaction("✅")
         except Exception as e:
             await ctx.send(f"❌ Failed to send close request:\n```{e}```")
