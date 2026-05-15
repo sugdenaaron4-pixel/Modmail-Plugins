@@ -18,7 +18,9 @@ class Jet2Support(commands.Cog):
     def __init__(self, bot):
 
         self.bot = bot
-        self.color = 0x2b2d31
+
+        # RED THEME
+        self.color = 0xe02e2e
 
         self.ticket_departments = {}
         self.claimed_tickets = set()
@@ -350,19 +352,27 @@ class Jet2Support(commands.Cog):
         ctx
     ):
 
-        try:
+        # FIND CURRENT MODMAIL THREAD
+        thread = await self.bot.threads.find(
+            recipient=None,
+            channel=ctx.channel
+        )
 
-            thread = await self.bot.threads.find(
-                ctx.channel
+        if thread is None:
+
+            await ctx.send(
+                "❌ This command can only be used inside a Modmail ticket."
             )
 
-        except Exception:
             return
 
-        if not thread:
-            return
-
+        # ALREADY CLAIMED
         if thread.id in self.claim_messages_sent:
+
+            await ctx.message.add_reaction(
+                "⚠️"
+            )
+
             return
 
         department_id = self.ticket_departments.get(
@@ -416,20 +426,26 @@ class Jet2Support(commands.Cog):
 
         try:
 
+            # SEND DM TO USER
             await thread.recipient.send(
                 embed=embed
             )
 
+            # REACT SUCCESS
             await ctx.message.add_reaction(
                 "✅"
             )
 
+            # UPDATE QUEUE
             await self.update_department_queue(
                 department_id
             )
 
-        except Exception:
-            pass
+        except Exception as e:
+
+            await ctx.send(
+                f"❌ Failed to send claim message:\n```{e}```"
+            )
 
 
 async def setup(bot):
