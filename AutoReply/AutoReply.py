@@ -239,32 +239,31 @@ class Jet2Support(commands.Cog):
 
         department_id = self.ticket_departments.get(thread.id, "06")
 
+        # Define the interactive buttons View
         class CloseRequestView(View):
-    def __init__(self, cog_ref, thread_ref, dept_id, timeout=300):
-        super().__init__(timeout=timeout)
-        self.cog_ref = cog_ref         # Reference to the Cog
-        self.thread_ref = thread_ref   # The Modmail thread
-        self.dept_id = dept_id
+            def __init__(self, cog_ref, thread_ref, dept_id, timeout=300):
+                super().__init__(timeout=timeout)
+                self.cog_ref = cog_ref         # Reference to Cog
+                self.thread_ref = thread_ref   # The Modmail thread
+                self.dept_id = dept_id
 
-    @discord.ui.button(label="Accept & Close", style=discord.ButtonStyle.green)
-    async def accept(self, interaction: discord.Interaction, button: Button):
-        # Remove from claimed tickets
-        self.cog_ref.claimed_tickets.discard(self.thread_ref.id)
-        self.cog_ref.claim_messages_sent.discard(self.thread_ref.id)
+            @discord.ui.button(label="Accept & Close", style=discord.ButtonStyle.green)
+            async def accept(self, interaction: discord.Interaction, button: Button):
+                self.cog_ref.claimed_tickets.discard(self.thread_ref.id)
+                self.cog_ref.claim_messages_sent.discard(self.thread_ref.id)
+                try:
+                    # Bot closes the thread
+                    await self.thread_ref.close(closer=self.cog_ref.bot.user)
+                    await self.cog_ref.update_department_queue(self.dept_id)
+                    await interaction.response.send_message("✅ Ticket closed successfully by the bot.", ephemeral=True)
+                except Exception as e:
+                    await interaction.response.send_message(f"❌ Failed to close ticket:\n```{e}```", ephemeral=True)
+                self.stop()
 
-        try:
-            # Use bot user as the closer
-            await self.thread_ref.close(closer=self.cog_ref.bot.user)
-            await self.cog_ref.update_department_queue(self.dept_id)
-            await interaction.response.send_message("✅ Ticket closed successfully by the bot.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Failed to close ticket:\n```{e}```", ephemeral=True)
-        self.stop()
-
-    @discord.ui.button(label="Deny & Stay Open", style=discord.ButtonStyle.red)
-    async def deny(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_message("❌ Close request denied. Ticket remains open.", ephemeral=True)
-        self.stop()
+            @discord.ui.button(label="Deny & Stay Open", style=discord.ButtonStyle.red)
+            async def deny(self, interaction: discord.Interaction, button: Button):
+                await interaction.response.send_message("❌ Close request denied. Ticket remains open.", ephemeral=True)
+                self.stop()
 
         embed = discord.Embed(
             title="Ticket Close Request",
