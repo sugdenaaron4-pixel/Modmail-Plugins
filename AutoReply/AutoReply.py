@@ -12,7 +12,6 @@ DEPARTMENTS = {
     "06": "Other / Unsure"
 }
 
-# Avg minutes per ticket
 AVERAGE_HANDLE_TIME = {
     "01": 5,
     "02": 8,
@@ -30,9 +29,7 @@ class Jet2Support(commands.Cog):
 
         self.ticket_departments = {}
         self.claimed_tickets = set()
-        self.claim_messages_sent = set()
 
-        # NEW SYSTEMS
         self.ticket_created_at = {}
         self.ticket_counter = 0
         self.ticket_numbers = {}
@@ -85,7 +82,7 @@ class Jet2Support(commands.Cog):
         await thread.channel.send(embed=embed)
 
     # --------------------
-    # Queue Logic
+    # Queue System
     # --------------------
     async def get_queue_position(self, thread_id, department_id):
         active = []
@@ -97,18 +94,12 @@ class Jet2Support(commands.Cog):
                 continue
             if self.ticket_departments.get(thread.id) != department_id:
                 continue
-
             active.append(thread)
 
         active.sort(key=lambda t: self.ticket_created_at.get(t.id))
 
         ids = [t.id for t in active]
         return ids.index(thread_id) + 1 if thread_id in ids else 1
-
-    async def get_estimated_wait(self, position, department_id):
-        avg = AVERAGE_HANDLE_TIME.get(department_id, 5)
-        people_ahead = max(position - 1, 0)
-        return people_ahead * avg, (people_ahead + 1) * avg
 
     async def send_queue_update(self, thread, department_id):
         if thread.id in self.claimed_tickets:
@@ -118,16 +109,14 @@ class Jet2Support(commands.Cog):
         ticket_number = self.ticket_numbers.get(thread.id)
         serving = self.currently_serving.get(department_id)
 
-        # suffix fix
         if 10 <= position % 100 <= 20:
             suffix = "th"
         else:
             suffix = {1: "st", 2: "nd", 3: "rd"}.get(position % 10, "th")
 
-        min_wait, max_wait = await self.get_estimated_wait(position, department_id)
-
-        ahead = (ticket_number - serving) if serving else position - 1
-        ahead = max(ahead, 0)
+        avg = AVERAGE_HANDLE_TIME.get(department_id, 5)
+        min_wait = (position - 1) * avg
+        max_wait = position * avg
 
         embed = discord.Embed(
             title="📋 Queue Update",
@@ -135,8 +124,7 @@ class Jet2Support(commands.Cog):
                 f"🎟️ **Your Ticket Number:** `{ticket_number}`\n"
                 f"📞 **Currently Serving:** `{serving or 'None'}`\n\n"
                 f"You are currently **{position}{suffix}** in the **{DEPARTMENTS[department_id]}** queue.\n\n"
-                f"👥 Tickets Ahead: **{ahead}**\n"
-                f"⏱️ Estimated Wait: **{min_wait} - {max_wait} minutes**"
+                f"⏱️ Estimated Wait Time:\n**{min_wait} - {max_wait} minutes**"
             ),
             color=self.color
         )
@@ -186,70 +174,106 @@ class Jet2Support(commands.Cog):
         await asyncio.sleep(1)
         await self.update_department_queue(content)
 
-    @commands.Cog.listener()
-    async def on_thread_close(self, thread, closer, silent, delete_channel):
-        dept = self.ticket_departments.get(thread.id)
-        if dept:
-            await asyncio.sleep(2)
-            await self.update_department_queue(dept)
-
     # --------------------
     # CLAIM
     # --------------------
-    @commands.command()
-    async def claim(self, ctx):
+    @commands.command(name="claim")
+    async def claim_ticket(self, ctx):
         thread = await self.bot.threads.find(recipient=None, channel=ctx.channel)
-        if not thread:
-            return await ctx.send("❌ Not a ticket.")
+
+        if thread is None:
+            return await ctx.send("❌ This command can only be used inside a Modmail ticket.")
 
         if thread.id in self.claimed_tickets:
-            return await ctx.send("❌ Already claimed.")
+            return await ctx.send("❌ This ticket is already claimed by another support agent.")
 
         dept = self.ticket_departments.get(thread.id, "06")
 
         self.claimed_tickets.add(thread.id)
         self.currently_serving[dept] = self.ticket_numbers.get(thread.id)
 
+        embed = discord.Embed(
+            title="🎉 You've Been Connected with a Support Agent",
+            description=(
+                f"Great news! A member of the **{DEPARTMENTS[dept]}** support team has joined your ticket.\n\n"
+                "=================\n\n"
+                f"👤 **Your Support Agent**\n{ctx.author.mention} — `{ctx.author.name}`\n\n"
+                "=================\n\n"
+                "- The agent will review your issue.\n"
+                "- Please provide screenshots if possible.\n"
+                "- Provide more info if requested.\n"
+                "- You may request another agent if needed.\n\n"
+                "=================\n\n"
+                "Thank you for Choosing Jet2.\n"
+                "> <:Jet2_Holidays:1501627858358112306> Package Holidays, You can Trust"
+            ),
+            color=self.color
+        )
+
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_footer(text="Jet2Support • Support Team Connected")
+
+        await thread.recipient.send(embed=embed)
         await ctx.message.add_reaction("✅")
+
         await self.update_department_queue(dept)
 
     # --------------------
     # UNCLAIM
     # --------------------
-    @commands.command()
-    async def unclaim(self, ctx):
+    @commands.command(name="unclaim")
+    async def unclaim_ticket(self, ctx):
         thread = await self.bot.threads.find(recipient=None, channel=ctx.channel)
-        if not thread:
+
+        if thread is None:
             return
 
         if thread.id not in self.claimed_tickets:
-            return await ctx.send("⚠️ Not claimed.")
+            return await ctx.send("⚠️ This ticket is not currently claimed.")
 
         dept = self.ticket_departments.get(thread.id, "06")
 
         self.claimed_tickets.discard(thread.id)
+        self.currently_serving.pop(dept, None)
 
         embed = discord.Embed(
             title="🔄 Ticket Update",
-            description="Your ticket has been reassigned to another agent.",
+            description=(
+                f"The Agent from the **{DEPARTMENTS[dept]}** support team has unclaimed your ticket.\n\n"
+                "=================\n\n"
+                f"👤 **Previous Support Agent**\n{ctx.author.mention} — `{ctx.author.name}`\n\n"
+                "=================\n\n"
+                "- Your ticket has been returned to the queue.\n"
+                "- A new support agent will assist you shortly.\n"
+                "- You may be asked to re-explain your issue.\n"
+                "- Please provide any additional details if needed.\n\n"
+                "=================\n\n"
+                "Thank you for your patience.\n"
+                "> <:Jet2_Holidays:1501627858358112306> Package Holidays, You can Trust"
+            ),
             color=self.color
         )
 
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_footer(text="Jet2Support • Ticket Reassigned")
+
         await thread.recipient.send(embed=embed)
-        await ctx.send("✅ Unclaimed.")
+        await ctx.send("✅ Ticket unclaimed and returned to queue.")
+
+        # 🔥 INSTANT QUEUE UPDATE (new)
+        await self.send_queue_update(thread, dept)
 
         await self.update_department_queue(dept)
 
     # --------------------
-    # REQUEST CLOSE (UNCHANGED)
+    # REQUEST CLOSE
     # --------------------
     @commands.command(name="requestclose", aliases=["closerequest"])
     async def request_close(self, ctx):
         thread = await self.bot.threads.find(recipient=None, channel=ctx.channel)
-        if not thread:
-            return
 
-        dept = self.ticket_departments.get(thread.id, "06")
+        if thread is None:
+            return await ctx.send("❌ This command can only be used inside a Modmail ticket.")
 
         class CloseView(View):
             @discord.ui.button(label="Accept & Close", style=discord.ButtonStyle.green)
@@ -257,15 +281,29 @@ class Jet2Support(commands.Cog):
                 await thread.close()
                 await i.response.send_message("Closed.", ephemeral=True)
 
-            @discord.ui.button(label="Deny", style=discord.ButtonStyle.red)
+            @discord.ui.button(label="Deny & Stay Open", style=discord.ButtonStyle.red)
             async def deny(self, i, b):
                 await i.response.send_message("Stayed open.", ephemeral=True)
 
         embed = discord.Embed(
             title="Ticket Close Request",
-            description="A support agent requested to close your ticket.",
+            description=(
+                "A member of the **Jet2Support** support team has requested to\n"
+                "**close your ticket.**\n\n"
+                "=================\n\n"
+                f"👤 **Requested By**\n{ctx.author.mention} — `{ctx.author.name}`\n\n"
+                "=================\n\n"
+                "- If your issue persists click **Deny & Stay Open**\n"
+                "- If resolved click **Accept & Close**\n"
+                "- This request expires in 5 minutes.\n\n"
+                "=================\n\n"
+                "Thank you for choosing **Jet2Support.**"
+            ),
             color=self.color
         )
+
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed.set_footer(text="Jet2Support • This request expires in 5 minutes")
 
         await thread.recipient.send(embed=embed, view=CloseView())
         await ctx.message.add_reaction("✅")
