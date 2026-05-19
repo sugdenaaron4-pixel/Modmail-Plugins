@@ -174,6 +174,17 @@ class Jet2Support(commands.Cog):
         await asyncio.sleep(1)
         await self.update_department_queue(content)
 
+    @commands.Cog.listener()
+    async def on_thread_close(self, thread, closer, silent, delete_channel):
+        dept = self.ticket_departments.get(thread.id)
+
+        self.claimed_tickets.discard(thread.id)
+
+        if dept:
+            self.currently_serving.pop(dept, None)
+            await asyncio.sleep(1)
+            await self.update_department_queue(dept)
+
     # --------------------
     # CLAIM
     # --------------------
@@ -260,9 +271,7 @@ class Jet2Support(commands.Cog):
         await thread.recipient.send(embed=embed)
         await ctx.send("✅ Ticket unclaimed and returned to queue.")
 
-        # 🔥 INSTANT QUEUE UPDATE (new)
         await self.send_queue_update(thread, dept)
-
         await self.update_department_queue(dept)
 
     # --------------------
@@ -275,15 +284,43 @@ class Jet2Support(commands.Cog):
         if thread is None:
             return await ctx.send("❌ This command can only be used inside a Modmail ticket.")
 
+        dept = self.ticket_departments.get(thread.id, "06")
+
         class CloseView(View):
+            def __init__(self, cog, thread, dept):
+                super().__init__(timeout=300)
+                self.cog = cog
+                self.thread = thread
+                self.dept = dept
+
             @discord.ui.button(label="Accept & Close", style=discord.ButtonStyle.green)
-            async def accept(self, i, b):
-                await thread.close()
-                await i.response.send_message("Closed.", ephemeral=True)
+            async def accept(self, interaction: discord.Interaction, button: Button):
+                self.cog.claimed_tickets.discard(self.thread.id)
+                self.cog.currently_serving.pop(self.dept, None)
+
+                try:
+                    await self.thread.close(closer=interaction.user)
+                    await self.cog.update_department_queue(self.dept)
+
+                    await interaction.response.send_message(
+                        "✅ Ticket closed successfully.",
+                        ephemeral=True
+                    )
+                except Exception as e:
+                    await interaction.response.send_message(
+                        f"❌ Failed to close ticket:\n```{e}```",
+                        ephemeral=True
+                    )
+
+                self.stop()
 
             @discord.ui.button(label="Deny & Stay Open", style=discord.ButtonStyle.red)
-            async def deny(self, i, b):
-                await i.response.send_message("Stayed open.", ephemeral=True)
+            async def deny(self, interaction: discord.Interaction, button: Button):
+                await interaction.response.send_message(
+                    "❌ Close request denied.",
+                    ephemeral=True
+                )
+                self.stop()
 
         embed = discord.Embed(
             title="Ticket Close Request",
@@ -305,7 +342,7 @@ class Jet2Support(commands.Cog):
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
         embed.set_footer(text="Jet2Support • This request expires in 5 minutes")
 
-        await thread.recipient.send(embed=embed, view=CloseView())
+        await thread.recipient.send(embed=embed, view=CloseView(self, thread, dept))
         await ctx.message.add_reaction("✅")
 
 
