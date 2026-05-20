@@ -7,7 +7,7 @@ from discord.ext import commands
 from discord.ui import View, Button
 
 ai_client = AsyncOpenAI(
-    api_key="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"
+    api_key="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"
 )
 
 DEPARTMENTS = {
