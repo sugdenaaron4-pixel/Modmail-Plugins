@@ -2,7 +2,23 @@ import asyncio
 import discord
 
 from discord.ext import commands
-from discord.ui import View, Button
+from discord.ui import View
+
+# ==================================================
+# CONFIG
+# ==================================================
+
+# PUT YOUR CATEGORY IDS HERE
+
+AWAITING_PLACEMENT_CATEGORY = 123456789012345678
+
+DEPARTMENT_CATEGORIES = {
+    "01": 111111111111111111,  # General Inquiries
+    "02": 222222222222222222,  # Partnership
+    "03": 333333333333333333,  # Legal & Abuse
+    "04": 444444444444444444,  # Ventro Studios Ownership
+    "05": 555555555555555555,  # Other / Unsure
+}
 
 DEPARTMENTS = {
     "01": "General Inquiries",
@@ -22,7 +38,9 @@ AVERAGE_HANDLE_TIME = {
 
 
 class VentroStudios(commands.Cog):
+
     def __init__(self, bot):
+
         self.bot = bot
         self.color = 0xe02e2e
 
@@ -39,16 +57,19 @@ class VentroStudios(commands.Cog):
     # ==================================================
 
     async def send_navigation_embed(self, thread):
+
         embed = discord.Embed(
-            title="ᴀ Support Navigation",
+            title="Support Navigation",
             description=(
-                "Welcome to **Jet2Support**.\n\n"
+                "Welcome to **Ventro Studios**.\n\n"
                 "Please select the department you require.\n\n"
+
                 "**01** ▸ General Inquiries\n"
                 "**02** ▸ Partnership\n"
                 "**03** ▸ Legal & Abuse\n"
                 "**04** ▸ Ventro Studios Ownership\n"
                 "**05** ▸ Other / Unsure\n\n"
+
                 "Reply with the number only."
             ),
             color=self.color
@@ -56,28 +77,37 @@ class VentroStudios(commands.Cog):
 
         await thread.recipient.send(embed=embed)
 
-    async def send_department_embed(self, thread, department_id):
+    async def send_department_embed(
+        self,
+        thread,
+        department_id
+    ):
+
         descriptions = {
             "01": (
                 "You have been connected to "
                 "**General Inquiries**.\n\n"
                 "A support agent will assist you shortly."
             ),
+
             "02": (
                 "You have been connected to "
                 "**Partnership Enquiries**.\n\n"
                 "A PE team member will assist you shortly."
             ),
+
             "03": (
                 "You have been connected to "
                 "**Legal & Abuse**.\n\n"
                 "A legal team member will review your case shortly."
             ),
+
             "04": (
                 "You have been connected to "
                 "**Ventro Studios Ownership**.\n\n"
                 "A Ownership Member will be With you Shortly\n"
             ),
+
             "05": (
                 "You have been connected to "
                 "**Other / Unsure**.\n\n"
@@ -99,6 +129,7 @@ class VentroStudios(commands.Cog):
         department_id,
         user
     ):
+
         embed = discord.Embed(
             title="📂 Department Selected",
             description=(
@@ -113,6 +144,32 @@ class VentroStudios(commands.Cog):
         await thread.channel.send(embed=embed)
 
     # ==================================================
+    # CATEGORY MOVEMENT
+    # ==================================================
+
+    async def move_ticket_to_department(
+        self,
+        thread,
+        department_id
+    ):
+
+        category_id = DEPARTMENT_CATEGORIES.get(department_id)
+
+        if not category_id:
+            return
+
+        category = thread.guild.get_channel(category_id)
+
+        if not category:
+            return
+
+        try:
+            await thread.channel.edit(category=category)
+
+        except Exception:
+            pass
+
+    # ==================================================
     # QUEUE SYSTEM
     # ==================================================
 
@@ -121,9 +178,11 @@ class VentroStudios(commands.Cog):
         thread_id,
         department_id
     ):
+
         active = []
 
         for thread in self.bot.threads.cache.values():
+
             if getattr(thread, "closed", False):
                 continue
 
@@ -152,6 +211,7 @@ class VentroStudios(commands.Cog):
         thread,
         department_id
     ):
+
         if thread.id in self.claimed_tickets:
             return
 
@@ -182,11 +242,14 @@ class VentroStudios(commands.Cog):
             description=(
                 f"🎟️ **Your Ticket Number:** "
                 f"{ticket_number}\n"
+
                 f"📞 **Currently Serving:** "
                 f"{serving or 'None'}\n\n"
+
                 f"You are currently "
                 f"**{position}{suffix}** in the "
                 f"**{DEPARTMENTS[department_id]}** queue.\n\n"
+
                 f"⏱️ Estimated Wait Time:\n"
                 f"**{min_wait} - {max_wait} minutes**"
             ),
@@ -195,8 +258,13 @@ class VentroStudios(commands.Cog):
 
         await thread.recipient.send(embed=embed)
 
-    async def update_department_queue(self, department_id):
+    async def update_department_queue(
+        self,
+        department_id
+    ):
+
         for thread in self.bot.threads.cache.values():
+
             if getattr(thread, "closed", False):
                 continue
 
@@ -224,14 +292,30 @@ class VentroStudios(commands.Cog):
 
     @commands.Cog.listener()
     async def on_thread_create(self, thread):
+
         await asyncio.sleep(1)
 
         self.ticket_counter += 1
 
         self.ticket_numbers[thread.id] = self.ticket_counter
+
         self.ticket_created_at[thread.id] = (
             discord.utils.utcnow()
         )
+
+        # MOVE TO AWAITING PLACEMENT
+
+        try:
+
+            category = thread.guild.get_channel(
+                AWAITING_PLACEMENT_CATEGORY
+            )
+
+            if category:
+                await thread.channel.edit(category=category)
+
+        except Exception:
+            pass
 
         await self.send_navigation_embed(thread)
 
@@ -244,6 +328,7 @@ class VentroStudios(commands.Cog):
         anonymous,
         plain
     ):
+
         if from_mod:
             return
 
@@ -256,6 +341,13 @@ class VentroStudios(commands.Cog):
             return
 
         self.ticket_departments[thread.id] = content
+
+        # MOVE CATEGORY
+
+        await self.move_ticket_to_department(
+            thread,
+            content
+        )
 
         await self.send_department_embed(
             thread,
@@ -276,16 +368,20 @@ class VentroStudios(commands.Cog):
     async def on_thread_close(
         self,
         thread,
-        closer,
-        silent,
-        delete_channel
+        *args,
+        **kwargs
     ):
+
         dept = self.ticket_departments.get(thread.id)
 
         self.claimed_tickets.discard(thread.id)
 
         if dept:
-            self.currently_serving.pop(dept, None)
+
+            self.currently_serving.pop(
+                dept,
+                None
+            )
 
             await asyncio.sleep(1)
 
@@ -297,8 +393,8 @@ class VentroStudios(commands.Cog):
 
     @commands.command(name="claim")
     async def claim_ticket(self, ctx):
+
         thread = await self.bot.threads.find(
-            recipient=None,
             channel=ctx.channel
         )
 
@@ -316,7 +412,7 @@ class VentroStudios(commands.Cog):
 
         dept = self.ticket_departments.get(
             thread.id,
-            "06"
+            "05"
         )
 
         self.claimed_tickets.add(thread.id)
@@ -362,7 +458,10 @@ class VentroStudios(commands.Cog):
 
         await thread.recipient.send(embed=embed)
 
-        await ctx.message.add_reaction("✅")
+        try:
+            await ctx.message.add_reaction("✅")
+        except Exception:
+            pass
 
         await self.update_department_queue(dept)
 
@@ -372,8 +471,8 @@ class VentroStudios(commands.Cog):
 
     @commands.command(name="unclaim")
     async def unclaim_ticket(self, ctx):
+
         thread = await self.bot.threads.find(
-            recipient=None,
             channel=ctx.channel
         )
 
@@ -387,12 +486,15 @@ class VentroStudios(commands.Cog):
 
         dept = self.ticket_departments.get(
             thread.id,
-            "06"
+            "05"
         )
 
         self.claimed_tickets.discard(thread.id)
 
-        self.currently_serving.pop(dept, None)
+        self.currently_serving.pop(
+            dept,
+            None
+        )
 
         embed = discord.Embed(
             title="🔄 Ticket Update",
@@ -426,7 +528,7 @@ class VentroStudios(commands.Cog):
         )
 
         embed.set_footer(
-            text="Ventro Stuidos • Ticket Reassigned"
+            text="Ventro Studios • Ticket Reassigned"
         )
 
         await thread.recipient.send(embed=embed)
@@ -435,7 +537,10 @@ class VentroStudios(commands.Cog):
             "✅ Ticket unclaimed and returned to queue."
         )
 
-        await self.send_queue_update(thread, dept)
+        await self.send_queue_update(
+            thread,
+            dept
+        )
 
         await self.update_department_queue(dept)
 
@@ -448,8 +553,8 @@ class VentroStudios(commands.Cog):
         aliases=["closerequest"]
     )
     async def request_close(self, ctx):
+
         thread = await self.bot.threads.find(
-            recipient=None,
             channel=ctx.channel
         )
 
@@ -461,11 +566,18 @@ class VentroStudios(commands.Cog):
 
         dept = self.ticket_departments.get(
             thread.id,
-            "06"
+            "05"
         )
 
         class CloseView(View):
-            def __init__(self, cog, thread, dept):
+
+            def __init__(
+                self,
+                cog,
+                thread,
+                dept
+            ):
+
                 super().__init__(timeout=300)
 
                 self.cog = cog
@@ -479,8 +591,9 @@ class VentroStudios(commands.Cog):
             async def accept(
                 self,
                 interaction: discord.Interaction,
-                button: Button
+                button: discord.ui.Button
             ):
+
                 self.cog.claimed_tickets.discard(
                     self.thread.id
                 )
@@ -491,6 +604,7 @@ class VentroStudios(commands.Cog):
                 )
 
                 try:
+
                     await self.thread.close(
                         closer=interaction.user
                     )
@@ -505,6 +619,7 @@ class VentroStudios(commands.Cog):
                     )
 
                 except Exception as e:
+
                     await interaction.response.send_message(
                         f"❌ Failed to close ticket:\n{e}",
                         ephemeral=True
@@ -519,8 +634,9 @@ class VentroStudios(commands.Cog):
             async def deny(
                 self,
                 interaction: discord.Interaction,
-                button: Button
+                button: discord.ui.Button
             ):
+
                 await interaction.response.send_message(
                     "❌ Close request denied.",
                     ephemeral=True
@@ -531,7 +647,7 @@ class VentroStudios(commands.Cog):
         embed = discord.Embed(
             title="Ticket Close Request",
             description=(
-                "A member of the **Jet2Support** "
+                "A member of the **Ventro Studios** "
                 "support team has requested to\n"
                 "**close your ticket.**\n\n"
 
@@ -569,10 +685,17 @@ class VentroStudios(commands.Cog):
 
         await thread.recipient.send(
             embed=embed,
-            view=CloseView(self, thread, dept)
+            view=CloseView(
+                self,
+                thread,
+                dept
+            )
         )
 
-        await ctx.message.add_reaction("✅")
+        try:
+            await ctx.message.add_reaction("✅")
+        except Exception:
+            pass
 
 
 async def setup(bot):
