@@ -8,8 +8,6 @@ from discord.ui import View
 # CONFIG
 # ==================================================
 
-# PUT YOUR CATEGORY IDS HERE
-
 AWAITING_PLACEMENT_CATEGORY = 1507468762843054160
 
 DEPARTMENT_CATEGORIES = {
@@ -105,7 +103,7 @@ class VentroStudios(commands.Cog):
             "04": (
                 "You have been connected to "
                 "**Ventro Studios Ownership**.\n\n"
-                "A Ownership Member will be With you Shortly\n"
+                "An Ownership Member will be with you shortly."
             ),
 
             "05": (
@@ -153,21 +151,33 @@ class VentroStudios(commands.Cog):
         department_id
     ):
 
-        category_id = DEPARTMENT_CATEGORIES.get(department_id)
+        category_id = DEPARTMENT_CATEGORIES.get(
+            department_id
+        )
 
         if not category_id:
             return
 
-        category = thread.guild.get_channel(category_id)
+        guild = thread.channel.guild
+
+        category = guild.get_channel(
+            category_id
+        )
 
         if not category:
             return
 
         try:
-            await thread.channel.edit(category=category)
 
-        except Exception:
-            pass
+            await thread.channel.edit(
+                category=category
+            )
+
+        except Exception as e:
+
+            print(
+                f"Failed to move ticket: {e}"
+            )
 
     # ==================================================
     # QUEUE SYSTEM
@@ -189,7 +199,10 @@ class VentroStudios(commands.Cog):
             if thread.id in self.claimed_tickets:
                 continue
 
-            if self.ticket_departments.get(thread.id) != department_id:
+            if (
+                self.ticket_departments.get(thread.id)
+                != department_id
+            ):
                 continue
 
             active.append(thread)
@@ -220,8 +233,13 @@ class VentroStudios(commands.Cog):
             department_id
         )
 
-        ticket_number = self.ticket_numbers.get(thread.id)
-        serving = self.currently_serving.get(department_id)
+        ticket_number = self.ticket_numbers.get(
+            thread.id
+        )
+
+        serving = self.currently_serving.get(
+            department_id
+        )
 
         if 10 <= position % 100 <= 20:
             suffix = "th"
@@ -232,7 +250,10 @@ class VentroStudios(commands.Cog):
                 3: "rd"
             }.get(position % 10, "th")
 
-        avg = AVERAGE_HANDLE_TIME.get(department_id, 5)
+        avg = AVERAGE_HANDLE_TIME.get(
+            department_id,
+            5
+        )
 
         min_wait = (position - 1) * avg
         max_wait = position * avg
@@ -278,6 +299,7 @@ class VentroStudios(commands.Cog):
                 continue
 
             try:
+
                 await self.send_queue_update(
                     thread,
                     department_id
@@ -297,7 +319,9 @@ class VentroStudios(commands.Cog):
 
         self.ticket_counter += 1
 
-        self.ticket_numbers[thread.id] = self.ticket_counter
+        self.ticket_numbers[thread.id] = (
+            self.ticket_counter
+        )
 
         self.ticket_created_at[thread.id] = (
             discord.utils.utcnow()
@@ -307,17 +331,25 @@ class VentroStudios(commands.Cog):
 
         try:
 
-            category = thread.guild.get_channel(
+            category = thread.channel.guild.get_channel(
                 AWAITING_PLACEMENT_CATEGORY
             )
 
             if category:
-                await thread.channel.edit(category=category)
 
-        except Exception:
-            pass
+                await thread.channel.edit(
+                    category=category
+                )
 
-        await self.send_navigation_embed(thread)
+        except Exception as e:
+
+            print(
+                f"Failed to move ticket: {e}"
+            )
+
+        await self.send_navigation_embed(
+            thread
+        )
 
     @commands.Cog.listener()
     async def on_thread_reply(
@@ -340,19 +372,25 @@ class VentroStudios(commands.Cog):
         if content not in DEPARTMENTS:
             return
 
-        self.ticket_departments[thread.id] = content
+        self.ticket_departments[thread.id] = (
+            content
+        )
 
-        # MOVE CATEGORY
+        # MOVE CHANNEL
 
         await self.move_ticket_to_department(
             thread,
             content
         )
 
+        # USER EMBED
+
         await self.send_department_embed(
             thread,
             content
         )
+
+        # STAFF LOG
 
         await self.send_staff_department_log(
             thread,
@@ -362,7 +400,9 @@ class VentroStudios(commands.Cog):
 
         await asyncio.sleep(1)
 
-        await self.update_department_queue(content)
+        await self.update_department_queue(
+            content
+        )
 
     @commands.Cog.listener()
     async def on_thread_close(
@@ -372,9 +412,13 @@ class VentroStudios(commands.Cog):
         **kwargs
     ):
 
-        dept = self.ticket_departments.get(thread.id)
+        dept = self.ticket_departments.get(
+            thread.id
+        )
 
-        self.claimed_tickets.discard(thread.id)
+        self.claimed_tickets.discard(
+            thread.id
+        )
 
         if dept:
 
@@ -385,7 +429,9 @@ class VentroStudios(commands.Cog):
 
             await asyncio.sleep(1)
 
-            await self.update_department_queue(dept)
+            await self.update_department_queue(
+                dept
+            )
 
     # ==================================================
     # CLAIM
@@ -399,12 +445,14 @@ class VentroStudios(commands.Cog):
         )
 
         if thread is None:
+
             return await ctx.send(
                 "❌ This command can only be used "
                 "inside a Modmail ticket."
             )
 
         if thread.id in self.claimed_tickets:
+
             return await ctx.send(
                 "❌ This ticket is already claimed "
                 "by another support agent."
@@ -415,10 +463,14 @@ class VentroStudios(commands.Cog):
             "05"
         )
 
-        self.claimed_tickets.add(thread.id)
+        self.claimed_tickets.add(
+            thread.id
+        )
 
         self.currently_serving[dept] = (
-            self.ticket_numbers.get(thread.id)
+            self.ticket_numbers.get(
+                thread.id
+            )
         )
 
         embed = discord.Embed(
@@ -456,14 +508,22 @@ class VentroStudios(commands.Cog):
             text="Ventro Studios • Support Team Connected"
         )
 
-        await thread.recipient.send(embed=embed)
+        await thread.recipient.send(
+            embed=embed
+        )
 
         try:
-            await ctx.message.add_reaction("✅")
+
+            await ctx.message.add_reaction(
+                "✅"
+            )
+
         except Exception:
             pass
 
-        await self.update_department_queue(dept)
+        await self.update_department_queue(
+            dept
+        )
 
     # ==================================================
     # UNCLAIM
@@ -480,6 +540,7 @@ class VentroStudios(commands.Cog):
             return
 
         if thread.id not in self.claimed_tickets:
+
             return await ctx.send(
                 "⚠️ This ticket is not currently claimed."
             )
@@ -489,7 +550,9 @@ class VentroStudios(commands.Cog):
             "05"
         )
 
-        self.claimed_tickets.discard(thread.id)
+        self.claimed_tickets.discard(
+            thread.id
+        )
 
         self.currently_serving.pop(
             dept,
@@ -531,7 +594,9 @@ class VentroStudios(commands.Cog):
             text="Ventro Studios • Ticket Reassigned"
         )
 
-        await thread.recipient.send(embed=embed)
+        await thread.recipient.send(
+            embed=embed
+        )
 
         await ctx.send(
             "✅ Ticket unclaimed and returned to queue."
@@ -542,7 +607,9 @@ class VentroStudios(commands.Cog):
             dept
         )
 
-        await self.update_department_queue(dept)
+        await self.update_department_queue(
+            dept
+        )
 
     # ==================================================
     # REQUEST CLOSE
@@ -559,6 +626,7 @@ class VentroStudios(commands.Cog):
         )
 
         if thread is None:
+
             return await ctx.send(
                 "❌ This command can only be used "
                 "inside a Modmail ticket."
@@ -578,7 +646,9 @@ class VentroStudios(commands.Cog):
                 dept
             ):
 
-                super().__init__(timeout=300)
+                super().__init__(
+                    timeout=300
+                )
 
                 self.cog = cog
                 self.thread = thread
@@ -693,10 +763,17 @@ class VentroStudios(commands.Cog):
         )
 
         try:
-            await ctx.message.add_reaction("✅")
+
+            await ctx.message.add_reaction(
+                "✅"
+            )
+
         except Exception:
             pass
 
 
 async def setup(bot):
-    await bot.add_cog(VentroStudios(bot))
+
+    await bot.add_cog(
+        VentroStudios(bot)
+    )
