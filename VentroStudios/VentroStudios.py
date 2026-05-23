@@ -254,6 +254,153 @@ class VentroStudios(commands.Cog):
         await self.update_department_queue(dept)
 
     # ==================================================
+    # TRANSFER
+    # ==================================================
+
+    @commands.command(name="transfer")
+    async def transfer_ticket(self, ctx, *, department: str = None):
+
+        thread = await self.bot.threads.find(channel=ctx.channel)
+
+        if not thread:
+            return await ctx.send("❌ Must be used in a ticket.")
+
+        # ==================================================
+        # HELP EMBED
+        # ==================================================
+
+        if not department:
+
+            embed = discord.Embed(
+                title="📂 Transfer Ticket",
+                description=(
+                    "Transfer this ticket to another department.\n\n"
+                    "**01** ▸ General Inquiries\n"
+                    "**02** ▸ Partnership\n"
+                    "**03** ▸ Legal & Abuse\n"
+                    "**04** ▸ Ventro Studios Ownership\n"
+                    "**05** ▸ Other / Unsure\n\n"
+                    "Usage:\n"
+                    "`.transfer 01`\n"
+                    "`.transfer 1`\n"
+                    "`.transfer General`\n"
+                    "`.transfer Partnership`"
+                ),
+                color=self.color
+            )
+
+            return await ctx.send(embed=embed)
+
+        # ==================================================
+        # ALIASES
+        # ==================================================
+
+        department = department.lower().strip()
+
+        aliases = {
+
+            # 01
+            "1": "01",
+            "01": "01",
+            "general": "01",
+            "general inquiries": "01",
+            "inquiries": "01",
+
+            # 02
+            "2": "02",
+            "02": "02",
+            "partnership": "02",
+            "partnerships": "02",
+
+            # 03
+            "3": "03",
+            "03": "03",
+            "legal": "03",
+            "abuse": "03",
+            "legal & abuse": "03",
+
+            # 04
+            "4": "04",
+            "04": "04",
+            "ownership": "04",
+            "ventro studios ownership": "04",
+
+            # 05
+            "5": "05",
+            "05": "05",
+            "other": "05",
+            "unsure": "05",
+            "other / unsure": "05",
+        }
+
+        department_id = aliases.get(department)
+
+        if not department_id:
+            return await ctx.send("❌ Invalid department.")
+
+        old_department = self.ticket_departments.get(thread.id, "05")
+
+        # ==================================================
+        # UPDATE DATA
+        # ==================================================
+
+        self.ticket_departments[thread.id] = department_id
+
+        self.claimed_tickets.discard(thread.id)
+        self.currently_serving.pop(old_department, None)
+
+        # ==================================================
+        # MOVE CATEGORY
+        # ==================================================
+
+        await self.move_ticket_to_department(thread, department_id)
+
+        # ==================================================
+        # USER EMBED
+        # ==================================================
+
+        descriptions = {
+            "01": "Your ticket has been transferred to **General Inquiries**.\n\nA support agent will assist you shortly.",
+            "02": "Your ticket has been transferred to **Partnership Enquiries**.\n\nA PE team member will assist you shortly.",
+            "03": "Your ticket has been transferred to **Legal & Abuse**.\n\nA legal team member will review your case shortly.",
+            "04": "Your ticket has been transferred to **Ventro Studios Ownership**.\n\nAn Ownership Member will be with you shortly.",
+            "05": "Your ticket has been transferred to **Other / Unsure**.\n\nA support agent will direct your ticket shortly."
+        }
+
+        embed = discord.Embed(
+            title="📂 Ticket Transferred",
+            description=descriptions[department_id],
+            color=self.color
+        )
+
+        await thread.recipient.send(embed=embed)
+
+        # ==================================================
+        # STAFF EMBED
+        # ==================================================
+
+        embed = discord.Embed(
+            title="🔄 Ticket Transferred",
+            description=(
+                f"Transferred By: {ctx.author.mention}\n"
+                f"Department: **{DEPARTMENTS[department_id]}**\n"
+                f"Transfer Code: {department_id}"
+            ),
+            color=self.color
+        )
+
+        await ctx.send(embed=embed)
+
+        # ==================================================
+        # UPDATE QUEUE
+        # ==================================================
+
+        await asyncio.sleep(1)
+
+        await self.update_department_queue(old_department)
+        await self.update_department_queue(department_id)
+
+    # ==================================================
     # REQUEST CLOSE
     # ==================================================
 
