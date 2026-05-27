@@ -749,7 +749,7 @@ class VentroStudios(commands.Cog):
 
                 try:
                     await self.thread.close(
-                        closer=interaction.user
+                        closer=interaction.cog.bot.user
                     )
 
                     await self.cog.update_department_queue(
