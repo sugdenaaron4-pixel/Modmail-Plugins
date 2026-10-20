@@ -459,7 +459,7 @@ class EastlightModmail(commands.Cog):
         self.ticket_created_at[thread.id] = discord.utils.utcnow()
 
         category = self.get_category(
-            thread.guild,
+            thread.channel.guild,
             AWAITING_PLACEMENT_CATEGORY
         )
 
