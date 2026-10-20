@@ -210,7 +210,7 @@ class EastlightModmail(commands.Cog):
                 category_id = branch_category_id
 
         category = self.get_category(
-            thread.guild,
+            thread.channel.guild,
             category_id
         )
 
