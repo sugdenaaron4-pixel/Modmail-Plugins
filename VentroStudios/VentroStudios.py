@@ -1,218 +1,368 @@
 import asyncio
-import discord
+import json
+import os
+from pathlib import Path
 
+import discord
 from discord.ext import commands
 from discord.ui import View, Button
 
+
+# ============================================================
+# EASTLIGHT PRIMARY SCHOOL MODMAIL CONFIGURATION
+# ============================================================
+
+EMBED_COLOUR = 0xE02E2E
+PREFIX = "-"
+
+# Role allowed to use ?closeapp and ?openapp.
+# Replace 0 with your Discord role ID.
+CLOSEAPP_ALLOWED_ROLE_ID = 1553769601186144409
+
+# Users with Administrator permission can also manage closures.
+ALLOW_ADMIN_OVERRIDE = True
+
+# Category used while a ticket awaits department selection.
+AWAITING_PLACEMENT_CATEGORY = 1559299230533947484  # Replace with your category ID.
+
+# Department categories.
+# Replace the zeroes with the correct Discord category IDs.
+DEPARTMENT_CATEGORIES = {
+    "01": 1562212040582373376,  # General Enquiries
+    "02": 1562212125860958309,  # Careers
+    "03": 1562212854189264986,  # Legal & Abuse
+}
+
+# Optional individual Careers branch categories.
+# Set each ID to 0 to use the general Careers category instead.
+CAREER_BRANCH_CATEGORIES = {
+    "LLT": 1562212125860958309,
+    "MLT": 1562212187269759108,
+    "SLT": 1562212268941517001,
+    "SITE": 1562212772450672670,
+}
+
+DATA_DIR = Path("data")
+APPLICATION_STATUS_FILE = DATA_DIR / "application_status.json"
+
 DEPARTMENTS = {
-    "01": "General Inquiries",
-    "02": "Partnership",
+    "01": "General Enquiries",
+    "02": "Careers",
     "03": "Legal & Abuse",
-    "04": "Ventro Studios Ownership",
-    "05": "Other / Unsure"
+}
+
+CAREER_BRANCHES = {
+    "LLT": "Lower Leadership Team (LLT)",
+    "MLT": "Middle Leadership Team (MLT)",
+    "SLT": "Senior Leadership Team (SLT)",
+    "SITE": "Site Team (SITE)",
 }
 
 AVERAGE_HANDLE_TIME = {
     "01": 5,
     "02": 8,
     "03": 10,
-    "04": 30,
-    "05": 7
 }
 
-AWAITING_PLACEMENT_CATEGORY = 1507468762843054160
+DEPARTMENT_ALIASES = {
+    "01": "01",
+    "1": "01",
+    "general": "01",
+    "general enquiries": "01",
+    "general inquiries": "01",
 
-DEPARTMENT_CATEGORIES = {
-    "01": 1502299888770351177,
-    "02": 1502299890284367902,
-    "03": 1502299891249189025,
-    "04": 1502299891249189025,
-    "05": 1507468762843054160,
+    "02": "02",
+    "2": "02",
+    "careers": "02",
+    "career": "02",
+
+    "03": "03",
+    "3": "03",
+    "legal": "03",
+    "abuse": "03",
+    "legal & abuse": "03",
+}
+
+BRANCH_ALIASES = {
+    "LLT": "LLT",
+    "LOWER LEADERSHIP TEAM": "LLT",
+    "LOWER LEADERSHIP": "LLT",
+
+    "MLT": "MLT",
+    "MIDDLE LEADERSHIP TEAM": "MLT",
+    "MIDDLE LEADERSHIP": "MLT",
+
+    "SLT": "SLT",
+    "SENIOR LEADERSHIP TEAM": "SLT",
+    "SENIOR LEADERSHIP": "SLT",
+
+    "SITE": "SITE",
+    "SITE TEAM": "SITE",
 }
 
 
-class VentroStudios(commands.Cog):
+# ============================================================
+# MODMAIL COG
+# ============================================================
+
+class EastlightModmail(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.color = 0xe02e2e
 
+        # Ticket information held while the bot is running.
         self.ticket_departments = {}
+        self.ticket_branches = {}
+        self.pending_careers = set()
+
         self.claimed_tickets = set()
+        self.ticket_claimers = {}
         self.ticket_created_at = {}
         self.ticket_numbers = {}
         self.currently_serving = {}
-        self.ticket_claimers = {}
 
         self.ticket_counter = 0
 
-    # ==================================================
-    # HELPERS
-    # ==================================================
+        # Branch closures survive bot restarts.
+        self.application_status = {
+            branch: True for branch in CAREER_BRANCHES
+        }
+
+        self.load_application_status()
+
+    # ========================================================
+    # APPLICATION STATUS STORAGE
+    # ========================================================
+
+    def load_application_status(self):
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+        if not APPLICATION_STATUS_FILE.exists():
+            self.save_application_status()
+            return
+
+        try:
+            with APPLICATION_STATUS_FILE.open(
+                "r", encoding="utf-8"
+            ) as file:
+                saved = json.load(file)
+
+            for branch in CAREER_BRANCHES:
+                self.application_status[branch] = bool(
+                    saved.get(branch, True)
+                )
+
+        except (json.JSONDecodeError, OSError) as error:
+            print(
+                "[Eastlight Modmail] Could not load application "
+                f"status: {error}"
+            )
+
+    def save_application_status(self):
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+        temporary_file = APPLICATION_STATUS_FILE.with_suffix(".tmp")
+
+        with temporary_file.open("w", encoding="utf-8") as file:
+            json.dump(
+                self.application_status,
+                file,
+                indent=4
+            )
+
+        temporary_file.replace(APPLICATION_STATUS_FILE)
+
+    # ========================================================
+    # GENERAL HELPERS
+    # ========================================================
 
     def normalize_department(self, value):
         if not value:
             return None
 
-        value = value.lower().strip()
+        return DEPARTMENT_ALIASES.get(value.strip().lower())
 
-        aliases = {
-            "01": "01",
-            "1": "01",
-            "general": "01",
-            "general inquiries": "01",
+    def normalize_branch(self, value):
+        if not value:
+            return None
 
-            "02": "02",
-            "2": "02",
-            "partnership": "02",
-            "partner": "02",
+        return BRANCH_ALIASES.get(value.strip().upper())
 
-            "03": "03",
-            "3": "03",
-            "legal": "03",
-            "abuse": "03",
+    def get_category(self, guild, category_id):
+        if not category_id:
+            return None
 
-            "04": "04",
-            "4": "04",
-            "ownership": "04",
-            "ventro studios ownership": "04",
+        category = guild.get_channel(category_id)
 
-            "05": "05",
-            "5": "05",
-            "other": "05",
-            "unsure": "05"
-        }
+        if isinstance(category, discord.CategoryChannel):
+            return category
 
-        return aliases.get(value)
+        return None
 
-    async def move_ticket_to_department(
-        self,
-        thread,
-        department_id
-    ):
+    async def move_ticket(self, thread, department_id, branch=None):
         category_id = DEPARTMENT_CATEGORIES.get(department_id)
 
-        if not category_id:
-            return
+        if department_id == "02" and branch:
+            branch_category_id = CAREER_BRANCH_CATEGORIES.get(
+                branch, 0
+            )
 
-        category = thread.guild.get_channel(category_id)
+            if branch_category_id:
+                category_id = branch_category_id
 
-        if not category:
+        category = self.get_category(
+            thread.guild,
+            category_id
+        )
+
+        if category is None:
             return
 
         try:
-            await thread.channel.edit(
-                category=category
+            await thread.channel.edit(category=category)
+        except (discord.Forbidden, discord.HTTPException) as error:
+            print(
+                f"[Eastlight Modmail] Could not move ticket "
+                f"{thread.id}: {error}"
             )
 
-        except Exception:
-            pass
-
-    async def can_staff_talk(
-        self,
-        member,
-        thread
-    ):
-        if member.guild_permissions.administrator:
-            return True
-
-        if member.guild_permissions.manage_guild:
-            return True
-
-        if thread.id not in self.claimed_tickets:
+    def can_manage_application_status(self, member):
+        if not isinstance(member, discord.Member):
             return False
 
-        claimer_id = self.ticket_claimers.get(thread.id)
+        if (
+            ALLOW_ADMIN_OVERRIDE
+            and member.guild_permissions.administrator
+        ):
+            return True
 
-        return claimer_id == member.id
+        if CLOSEAPP_ALLOWED_ROLE_ID == 0:
+            return False
 
-    # ==================================================
-    # NAVIGATION
-    # ==================================================
+        return any(
+            role.id == CLOSEAPP_ALLOWED_ROLE_ID
+            for role in member.roles
+        )
+
+    async def find_thread(self, channel):
+        try:
+            return await self.bot.threads.find(
+                recipient=None,
+                channel=channel
+            )
+        except Exception:
+            return None
+
+    async def notify_recipient(self, thread, embed):
+        try:
+            await thread.recipient.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    # ========================================================
+    # EMBEDS
+    # ========================================================
 
     async def send_navigation_embed(self, thread):
         embed = discord.Embed(
-            title="ᴀ Support Navigation",
+            title="Eastlight Primary School | Support",
             description=(
-                "Welcome to **Ventro Studios**.\n\n"
-                "Please select the department you require.\n\n"
-                "**01** ▸ General Inquiries\n"
-                "**02** ▸ Partnership\n"
-                "**03** ▸ Legal & Abuse\n"
-                "**04** ▸ Ventro Studios Ownership\n"
-                "**05** ▸ Other / Unsure\n\n"
-                "Reply with the number only."
+                "Welcome to **Eastlight Primary School** support.\n\n"
+                "Please select the department you need by replying "
+                "with the corresponding number.\n\n"
+                "**01** — General Enquiries\n"
+                "**02** — Careers\n"
+                "**03** — Legal & Abuse\n\n"
+                "For Careers applications, you will then be asked "
+                "to select a team."
             ),
-            color=self.color
+            color=EMBED_COLOUR
         )
 
-        await thread.recipient.send(embed=embed)
+        embed.set_footer(text="Eastlight Primary School • Support")
+
+        await self.notify_recipient(thread, embed)
+
+    async def send_career_branch_embed(self, thread):
+        lines = []
+
+        for code, name in CAREER_BRANCHES.items():
+            status = (
+                "🟢 Open"
+                if self.application_status.get(code, True)
+                else "🔴 Closed"
+            )
+            lines.append(f"**{code}** — {name} · {status}")
+
+        embed = discord.Embed(
+            title="Careers | Choose a Team",
+            description=(
+                "Please reply with the code for the team you wish "
+                "to apply to.\n\n"
+                + "\n".join(lines)
+                + "\n\nOnly open teams can accept new applications."
+            ),
+            color=EMBED_COLOUR
+        )
+
+        embed.set_footer(
+            text="Eastlight Primary School • Careers"
+        )
+
+        await self.notify_recipient(thread, embed)
 
     async def send_department_embed(self, thread, department_id):
         descriptions = {
             "01": (
-                "You have been connected to "
-                "**General Inquiries**.\n\n"
-                "A support agent will assist you shortly."
+                "Your ticket has been placed in **General Enquiries**.\n\n"
+                "A member of the appropriate team will assist you."
             ),
             "02": (
-                "You have been connected to "
-                "**Partnership**.\n\n"
-                "A partnerships team member will assist you shortly."
+                "Your ticket has been placed in **Careers**.\n\n"
+                "Your selected team will review your application."
             ),
             "03": (
-                "You have been connected to "
-                "**Legal & Abuse**.\n\n"
-                "A legal team member will review your case shortly."
+                "Your ticket has been placed in **Legal & Abuse**.\n\n"
+                "A suitable team member will review your enquiry."
             ),
-            "04": (
-                "You have been connected to "
-                "**Ventro Studios Ownership**.\n\n"
-                "Estimated wait time:\n"
-                "**12 to 48 hours**."
-            ),
-            "05": (
-                "You have been connected to "
-                "**Other / Unsure**.\n\n"
-                "A support agent will direct your ticket shortly."
-            )
         }
 
         embed = discord.Embed(
             title="Department Selected",
             description=descriptions[department_id],
-            color=self.color
+            color=EMBED_COLOUR
         )
 
-        await thread.recipient.send(embed=embed)
+        await self.notify_recipient(thread, embed)
 
     async def send_staff_department_log(
-        self,
-        thread,
-        department_id,
-        user
+        self, thread, department_id, user
     ):
+        branch = self.ticket_branches.get(thread.id)
+
+        description = (
+            f"**User:** {user.mention}\n"
+            f"**Department:** {DEPARTMENTS[department_id]}\n"
+            f"**Ticket:** `{thread.id}`"
+        )
+
+        if branch:
+            description += (
+                f"\n**Careers Team:** {CAREER_BRANCHES[branch]}"
+            )
+
         embed = discord.Embed(
-            title="📂 Department Selected",
-            description=(
-                f"User: {user.mention}\n"
-                f"Department: "
-                f"**{DEPARTMENTS[department_id]}**\n"
-                f"Selection Code: {department_id}"
-            ),
-            color=self.color
+            title="Department Selected",
+            description=description,
+            color=EMBED_COLOUR
         )
 
         await thread.channel.send(embed=embed)
 
-    # ==================================================
+    # ========================================================
     # QUEUE SYSTEM
-    # ==================================================
+    # ========================================================
 
-    async def get_queue_position(
-        self,
-        thread_id,
-        department_id
-    ):
+    async def get_queue_position(self, thread_id, department_id):
         active = []
 
         for thread in self.bot.threads.cache.values():
@@ -228,22 +378,16 @@ class VentroStudios(commands.Cog):
             active.append(thread)
 
         active.sort(
-            key=lambda t: self.ticket_created_at.get(t.id)
+            key=lambda ticket: self.ticket_created_at.get(
+                ticket.id, discord.utils.utcnow()
+            )
         )
 
-        ids = [t.id for t in active]
+        ids = [ticket.id for ticket in active]
 
-        return (
-            ids.index(thread_id) + 1
-            if thread_id in ids
-            else 1
-        )
+        return ids.index(thread_id) + 1 if thread_id in ids else 1
 
-    async def send_queue_update(
-        self,
-        thread,
-        department_id
-    ):
+    async def send_queue_update(self, thread, department_id):
         if thread.id in self.claimed_tickets:
             return
 
@@ -252,7 +396,10 @@ class VentroStudios(commands.Cog):
             department_id
         )
 
-        ticket_number = self.ticket_numbers.get(thread.id)
+        ticket_number = self.ticket_numbers.get(
+            thread.id, "Unassigned"
+        )
+
         serving = self.currently_serving.get(department_id)
 
         if 10 <= position % 100 <= 20:
@@ -264,28 +411,24 @@ class VentroStudios(commands.Cog):
                 3: "rd"
             }.get(position % 10, "th")
 
-        avg = AVERAGE_HANDLE_TIME.get(department_id, 5)
-
-        min_wait = (position - 1) * avg
-        max_wait = position * avg
+        average = AVERAGE_HANDLE_TIME.get(department_id, 5)
+        minimum_wait = (position - 1) * average
+        maximum_wait = position * average
 
         embed = discord.Embed(
-            title="📋 Queue Update",
+            title="Support Queue Update",
             description=(
-                f"🎟️ **Your Ticket Number:** "
-                f"{ticket_number}\n"
-                f"📞 **Currently Serving:** "
-                f"{serving or 'None'}\n\n"
-                f"You are currently "
-                f"**{position}{suffix}** in the "
+                f"**Ticket Number:** {ticket_number}\n"
+                f"**Currently Serving:** {serving or 'None'}\n\n"
+                f"You are **{position}{suffix}** in the "
                 f"**{DEPARTMENTS[department_id]}** queue.\n\n"
-                f"⏱️ Estimated Wait Time:\n"
-                f"**{min_wait} - {max_wait} minutes**"
+                f"**Estimated wait:** {minimum_wait}–"
+                f"{maximum_wait} minutes"
             ),
-            color=self.color
+            color=EMBED_COLOUR
         )
 
-        await thread.recipient.send(embed=embed)
+        await self.notify_recipient(thread, embed)
 
     async def update_department_queue(self, department_id):
         for thread in self.bot.threads.cache.values():
@@ -295,106 +438,36 @@ class VentroStudios(commands.Cog):
             if thread.id in self.claimed_tickets:
                 continue
 
-            if (
-                self.ticket_departments.get(thread.id)
-                != department_id
-            ):
+            if self.ticket_departments.get(thread.id) != department_id:
                 continue
 
             try:
-                await self.send_queue_update(
-                    thread,
-                    department_id
-                )
-
+                await self.send_queue_update(thread, department_id)
             except Exception:
                 pass
 
-    # ==================================================
-    # LISTENERS
-    # ==================================================
-
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        if message.author.bot:
-            return
-
-        if not isinstance(message.channel, discord.TextChannel):
-            return
-
-        ctx = await self.bot.get_context(message)
-
-        if ctx.valid:
-            return
-
-        try:
-            thread = await self.bot.threads.find(
-                recipient=None,
-                channel=message.channel
-            )
-
-        except Exception:
-            return
-
-        if thread is None:
-            return
-
-        if not message.author.guild_permissions.manage_messages:
-            return
-
-        allowed = await self.can_staff_talk(
-            message.author,
-            thread
-        )
-
-        if allowed:
-            return
-
-        try:
-            await message.delete()
-        except Exception:
-            pass
-
-        if thread.id not in self.claimed_tickets:
-            warning = (
-                "❌ You must `.claim` this ticket before replying."
-            )
-        else:
-            warning = (
-                "❌ This ticket is already claimed by another agent."
-            )
-
-        try:
-            msg = await message.channel.send(warning)
-            await asyncio.sleep(5)
-            await msg.delete()
-
-        except Exception:
-            pass
+    # ========================================================
+    # MODMAIL LISTENERS
+    # ========================================================
 
     @commands.Cog.listener()
     async def on_thread_create(self, thread):
         await asyncio.sleep(1)
 
         self.ticket_counter += 1
-
         self.ticket_numbers[thread.id] = self.ticket_counter
-        self.ticket_created_at[thread.id] = (
-            discord.utils.utcnow()
+        self.ticket_created_at[thread.id] = discord.utils.utcnow()
+
+        category = self.get_category(
+            thread.guild,
+            AWAITING_PLACEMENT_CATEGORY
         )
 
-        try:
-            category = thread.guild.get_channel(
-                AWAITING_PLACEMENT_CATEGORY
-            )
-
-            if category:
-                await thread.channel.edit(
-                    category=category
-                )
-
-        except Exception:
-            pass
+        if category:
+            try:
+                await thread.channel.edit(category=category)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
         await self.send_navigation_embed(thread)
 
@@ -407,38 +480,82 @@ class VentroStudios(commands.Cog):
         anonymous,
         plain
     ):
+        # Staff replies do not select departments or branches.
         if from_mod:
             return
 
-        if thread.id in self.ticket_departments:
+        # First response: department selection.
+        if (
+            thread.id not in self.ticket_departments
+            and thread.id not in self.pending_careers
+        ):
+            department_id = self.normalize_department(
+                message.content
+            )
+
+            if department_id is None:
+                return
+
+            if department_id == "02":
+                self.pending_careers.add(thread.id)
+
+                await self.move_ticket(thread, "02")
+                await self.send_career_branch_embed(thread)
+                return
+
+            self.ticket_departments[thread.id] = department_id
+
+            await self.move_ticket(thread, department_id)
+            await self.send_department_embed(thread, department_id)
+
+            await self.send_staff_department_log(
+                thread,
+                department_id,
+                message.author
+            )
+
+            await self.update_department_queue(department_id)
             return
 
-        content = message.content.strip().zfill(2)
+        # Second response for Careers tickets: branch selection.
+        if thread.id in self.pending_careers:
+            branch = self.normalize_branch(message.content)
 
-        if content not in DEPARTMENTS:
-            return
+            if branch is None:
+                return
 
-        self.ticket_departments[thread.id] = content
+            # Closed branches reject new applications only.
+            # This does not close or modify existing tickets.
+            if not self.application_status.get(branch, True):
+                embed = discord.Embed(
+                    title="Applications Currently Closed",
+                    description=(
+                        f"Applications for **{CAREER_BRANCHES[branch]}** "
+                        "are currently closed.\n\n"
+                        "Please choose another open team or contact "
+                        "Eastlight Primary School for further information."
+                    ),
+                    color=EMBED_COLOUR
+                )
 
-        await self.move_ticket_to_department(
-            thread,
-            content
-        )
+                await self.notify_recipient(thread, embed)
+                await self.send_career_branch_embed(thread)
+                return
 
-        await self.send_department_embed(
-            thread,
-            content
-        )
+            self.pending_careers.discard(thread.id)
+            self.ticket_departments[thread.id] = "02"
+            self.ticket_branches[thread.id] = branch
 
-        await self.send_staff_department_log(
-            thread,
-            content,
-            message.author
-        )
+            await self.move_ticket(thread, "02", branch)
+            await self.send_department_embed(thread, "02")
 
-        await asyncio.sleep(1)
+            await self.send_staff_department_log(
+                thread,
+                "02",
+                message.author
+            )
 
-        await self.update_department_queue(content)
+            await self.update_department_queue("02")
 
     @commands.Cog.listener()
     async def on_thread_close(
@@ -448,389 +565,408 @@ class VentroStudios(commands.Cog):
         silent,
         delete_channel
     ):
-        dept = self.ticket_departments.get(thread.id)
+        department_id = self.ticket_departments.get(thread.id)
 
         self.claimed_tickets.discard(thread.id)
         self.ticket_claimers.pop(thread.id, None)
+        self.pending_careers.discard(thread.id)
 
-        if dept:
-            self.currently_serving.pop(dept, None)
+        if department_id:
+            self.currently_serving.pop(department_id, None)
+            await self.update_department_queue(department_id)
 
-            await asyncio.sleep(1)
+    # ========================================================
+    # APPLICATION BRANCH MANAGEMENT
+    # ========================================================
 
-            await self.update_department_queue(dept)
+    @commands.command(name="closeapp")
+    async def close_application_branch(self, ctx, branch=None):
+        if not self.can_manage_application_status(ctx.author):
+            return await ctx.send(
+                "❌ You do not have permission to manage application "
+                "branch availability."
+            )
 
-    # ==================================================
+        if branch is None:
+            return await ctx.send(
+                "**Usage:** `?closeapp <LLT|MLT|SLT|SITE>`"
+            )
+
+        branch_code = self.normalize_branch(branch)
+
+        if branch_code is None:
+            return await ctx.send(
+                "❌ Invalid branch. Use `LLT`, `MLT`, `SLT`, or `SITE`."
+            )
+
+        if not self.application_status.get(branch_code, True):
+            return await ctx.send(
+                f"⚠️ Applications for **{CAREER_BRANCHES[branch_code]}** "
+                "are already closed."
+            )
+
+        self.application_status[branch_code] = False
+        self.save_application_status()
+
+        embed = discord.Embed(
+            title="Applications Closed",
+            description=(
+                f"Applications for **{CAREER_BRANCHES[branch_code]}** "
+                "are now closed.\n\n"
+                "New applications for this branch will be rejected. "
+                "Existing tickets will remain open."
+            ),
+            color=EMBED_COLOUR
+        )
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name="openapp")
+    async def open_application_branch(self, ctx, branch=None):
+        if not self.can_manage_application_status(ctx.author):
+            return await ctx.send(
+                "❌ You do not have permission to manage application "
+                "branch availability."
+            )
+
+        if branch is None:
+            return await ctx.send(
+                "**Usage:** `?openapp <LLT|MLT|SLT|SITE>`"
+            )
+
+        branch_code = self.normalize_branch(branch)
+
+        if branch_code is None:
+            return await ctx.send(
+                "❌ Invalid branch. Use `LLT`, `MLT`, `SLT`, or `SITE`."
+            )
+
+        if self.application_status.get(branch_code, True):
+            return await ctx.send(
+                f"⚠️ Applications for **{CAREER_BRANCHES[branch_code]}** "
+                "are already open."
+            )
+
+        self.application_status[branch_code] = True
+        self.save_application_status()
+
+        embed = discord.Embed(
+            title="Applications Opened",
+            description=(
+                f"Applications for **{CAREER_BRANCHES[branch_code]}** "
+                "are now open again."
+            ),
+            color=EMBED_COLOUR
+        )
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name="appstatus")
+    async def application_status_command(self, ctx):
+        lines = []
+
+        for branch_code, branch_name in CAREER_BRANCHES.items():
+            status = (
+                "🟢 Open"
+                if self.application_status.get(branch_code, True)
+                else "🔴 Closed"
+            )
+
+            lines.append(f"**{branch_name}:** {status}")
+
+        embed = discord.Embed(
+            title="Careers Application Status",
+            description="\n".join(lines),
+            color=EMBED_COLOUR
+        )
+
+        await ctx.send(embed=embed)
+
+    # ========================================================
     # CLAIM
-    # ==================================================
+    # ========================================================
 
     @commands.command(name="claim")
     async def claim_ticket(self, ctx):
-        thread = await self.bot.threads.find(
-            recipient=None,
-            channel=ctx.channel
-        )
+        thread = await self.find_thread(ctx.channel)
 
         if thread is None:
             return await ctx.send(
-                "❌ This command can only be used "
-                "inside a Modmail ticket."
+                "❌ Use this command inside a Modmail ticket."
             )
 
         if thread.id in self.claimed_tickets:
             return await ctx.send(
-                "❌ This ticket is already claimed "
-                "by another support agent."
+                "❌ This ticket has already been claimed."
             )
 
-        dept = self.ticket_departments.get(
-            thread.id,
-            "05"
-        )
+        department_id = self.ticket_departments.get(thread.id)
+
+        if department_id is None:
+            return await ctx.send(
+                "⚠️ The user has not selected a department yet."
+            )
 
         self.claimed_tickets.add(thread.id)
         self.ticket_claimers[thread.id] = ctx.author.id
 
-        self.currently_serving[dept] = (
+        self.currently_serving[department_id] = (
             self.ticket_numbers.get(thread.id)
         )
 
-        embed = discord.Embed(
-            title="🎉 You've Been Connected with a Support Agent",
-            description=(
-                f"Great news! A member of the "
-                f"**{DEPARTMENTS[dept]}** support team "
-                f"has joined your ticket.\n\n"
-
-                "=================\n\n"
-
-                f"👤 **Your Support Agent**\n"
-                f"{ctx.author.mention} "
-                f"— {ctx.author.name}\n\n"
-
-                "=================\n\n"
-
-                "- The agent will review your issue.\n"
-                "- Please provide screenshots if possible.\n"
-                "- Provide more info if requested.\n"
-                "- You may request another agent if needed.\n\n"
-
-                "=================\n\n"
-
-                "Thank you for Choosing Ventro Studios.\n"
-                "<:VSWhiteBIG:1503144455417368788>"
-            ),
-            color=self.color
+        branch = self.ticket_branches.get(thread.id)
+        team_name = (
+            CAREER_BRANCHES[branch]
+            if branch
+            else DEPARTMENTS[department_id]
         )
 
-        embed.set_thumbnail(
-            url=ctx.author.display_avatar.url
+        embed = discord.Embed(
+            title="Your Support Ticket Has Been Claimed",
+            description=(
+                f"A member of **{team_name}** is now assisting you.\n\n"
+                f"**Support Agent:** {ctx.author.mention}\n\n"
+                "Please explain your enquiry clearly and provide "
+                "any relevant information."
+            ),
+            color=EMBED_COLOUR
         )
 
         embed.set_footer(
-            text="Ventro Studios • Support Team Connected"
+            text="Eastlight Primary School • Support Team"
         )
 
-        await thread.recipient.send(embed=embed)
-
+        await self.notify_recipient(thread, embed)
         await ctx.message.add_reaction("✅")
 
-        await self.update_department_queue(dept)
+        await self.update_department_queue(department_id)
 
-    # ==================================================
+    # ========================================================
     # UNCLAIM
-    # ==================================================
+    # ========================================================
 
     @commands.command(name="unclaim")
     async def unclaim_ticket(self, ctx):
-        thread = await self.bot.threads.find(
-            recipient=None,
-            channel=ctx.channel
-        )
+        thread = await self.find_thread(ctx.channel)
 
         if thread is None:
-            return
+            return await ctx.send(
+                "❌ Use this command inside a Modmail ticket."
+            )
 
         if thread.id not in self.claimed_tickets:
             return await ctx.send(
                 "⚠️ This ticket is not currently claimed."
             )
 
-        dept = self.ticket_departments.get(
-            thread.id,
-            "05"
-        )
+        department_id = self.ticket_departments.get(thread.id, "01")
 
         self.claimed_tickets.discard(thread.id)
         self.ticket_claimers.pop(thread.id, None)
-
-        self.currently_serving.pop(dept, None)
+        self.currently_serving.pop(department_id, None)
 
         embed = discord.Embed(
-            title="🔄 Ticket Update",
+            title="Ticket Returned to the Queue",
             description=(
-                f"The Agent from the "
-                f"**{DEPARTMENTS[dept]}** support team "
-                f"has unclaimed your ticket.\n\n"
-
-                "=================\n\n"
-
-                f"👤 **Previous Support Agent**\n"
-                f"{ctx.author.mention} "
-                f"— {ctx.author.name}\n\n"
-
-                "=================\n\n"
-
-                "- Your ticket has been returned to the queue.\n"
-                "- A new support agent will assist you shortly.\n"
-                "- You may be asked to re explain your issue.\n"
-                "- Please provide any additional details if needed.\n\n"
-
-                "=================\n\n"
-
-                "Thank you for your patience.\n"
-                "<:VSWhiteBIG:1503144455417368788>"
+                "Your ticket has been returned to the support queue. "
+                "Another agent will assist you when available."
             ),
-            color=self.color
+            color=EMBED_COLOUR
         )
 
-        embed.set_thumbnail(
-            url=ctx.author.display_avatar.url
-        )
+        await self.notify_recipient(thread, embed)
+        await ctx.send("✅ Ticket unclaimed and returned to the queue.")
 
-        embed.set_footer(
-            text="Ventro Studios • Ticket Reassigned"
-        )
+        await self.send_queue_update(thread, department_id)
+        await self.update_department_queue(department_id)
 
-        await thread.recipient.send(embed=embed)
-
-        await ctx.send(
-            "✅ Ticket unclaimed and returned to queue."
-        )
-
-        await self.send_queue_update(thread, dept)
-
-        await self.update_department_queue(dept)
-
-    # ==================================================
+    # ========================================================
     # TRANSFER
-    # ==================================================
+    # ========================================================
 
     @commands.command(name="transfer")
     async def transfer_ticket(self, ctx, *, department=None):
-        thread = await self.bot.threads.find(
-            recipient=None,
-            channel=ctx.channel
-        )
+        thread = await self.find_thread(ctx.channel)
 
         if thread is None:
             return await ctx.send(
-                "❌ This command can only be used inside a Modmail ticket."
+                "❌ Use this command inside a Modmail ticket."
             )
 
         if not department:
             return await ctx.send(
-                "**Usage:** `.transfer <department>`\n\n"
-                "**Supported Departments:**\n"
-                "`01` / `1` / `general`\n"
-                "`02` / `2` / `partnership`\n"
-                "`03` / `3` / `legal`\n"
-                "`04` / `4` / `ownership`\n"
-                "`05` / `5` / `other`"
+                "**Usage:** `?transfer <department>`\n"
+                "`01` General Enquiries\n"
+                "`02` Careers\n"
+                "`03` Legal & Abuse"
             )
 
-        dept = self.normalize_department(department)
+        department_id = self.normalize_department(department)
 
-        if dept is None:
+        if department_id is None:
             return await ctx.send(
-                "❌ Invalid department.\n\n"
-                "**Usage:** `.transfer <department>`"
+                "❌ Invalid department. Use `01`, `02`, or `03`."
             )
 
-        old_dept = self.ticket_departments.get(
-            thread.id,
-            "05"
-        )
+        old_department = self.ticket_departments.get(thread.id)
 
-        self.ticket_departments[thread.id] = dept
+        if department_id == "02":
+            self.pending_careers.add(thread.id)
+            self.ticket_departments.pop(thread.id, None)
+            self.ticket_branches.pop(thread.id, None)
 
-        await self.move_ticket_to_department(
-            thread,
-            dept
-        )
+            self.claimed_tickets.discard(thread.id)
+            self.ticket_claimers.pop(thread.id, None)
 
-        self.claimed_tickets.discard(thread.id)
-        self.ticket_claimers.pop(thread.id, None)
+            await self.move_ticket(thread, "02")
+            await self.send_career_branch_embed(thread)
 
-        self.currently_serving.pop(old_dept, None)
+            await ctx.send(
+                "✅ Ticket transferred to Careers. The user must "
+                "select an available branch."
+            )
 
-        embed = discord.Embed(
-            title="🔄 Ticket Transferred",
-            description=(
-                "Your ticket has been transferred to:\n\n"
-                f"**{DEPARTMENTS[dept]}**\n\n"
-                "A support agent will assist you shortly."
-            ),
-            color=self.color
-        )
+        else:
+            self.pending_careers.discard(thread.id)
+            self.ticket_departments[thread.id] = department_id
+            self.ticket_branches.pop(thread.id, None)
 
-        await thread.recipient.send(embed=embed)
+            self.claimed_tickets.discard(thread.id)
+            self.ticket_claimers.pop(thread.id, None)
 
-        log_embed = discord.Embed(
-            title="📂 Ticket Transferred",
-            description=(
-                f"Transferred By: {ctx.author.mention}\n"
-                f"New Department: **{DEPARTMENTS[dept]}**\n"
-                f"Department Code: `{dept}`"
-            ),
-            color=self.color
-        )
+            await self.move_ticket(thread, department_id)
+            await self.send_department_embed(thread, department_id)
 
-        await ctx.send(embed=log_embed)
+            await ctx.send(
+                f"✅ Ticket transferred to **"
+                f"{DEPARTMENTS[department_id]}**."
+            )
 
-        await self.update_department_queue(old_dept)
-        await self.update_department_queue(dept)
+        if old_department:
+            self.currently_serving.pop(old_department, None)
+            await self.update_department_queue(old_department)
 
-    # ==================================================
+        await self.update_department_queue(department_id)
+
+    # ========================================================
     # REQUEST CLOSE
-    # ==================================================
+    # ========================================================
 
     @commands.command(
         name="requestclose",
         aliases=["closerequest"]
     )
     async def request_close(self, ctx):
-        thread = await self.bot.threads.find(
-            recipient=None,
-            channel=ctx.channel
-        )
+        thread = await self.find_thread(ctx.channel)
 
         if thread is None:
             return await ctx.send(
-                "❌ This command can only be used "
-                "inside a Modmail ticket."
+                "❌ Use this command inside a Modmail ticket."
             )
 
-        dept = self.ticket_departments.get(
-            thread.id,
-            "05"
-        )
+        department_id = self.ticket_departments.get(thread.id, "01")
+
+        cog = self
 
         class CloseView(View):
-            def __init__(self, cog, thread, dept):
+            def __init__(self):
                 super().__init__(timeout=300)
-
-                self.cog = cog
-                self.thread = thread
-                self.dept = dept
 
             @discord.ui.button(
                 label="Accept & Close",
-                style=discord.ButtonStyle.green
+                style=discord.ButtonStyle.success
             )
             async def accept(
                 self,
                 interaction: discord.Interaction,
                 button: Button
             ):
-                self.cog.claimed_tickets.discard(
-                    self.thread.id
-                )
-
-                self.cog.ticket_claimers.pop(
-                    self.thread.id,
-                    None
-                )
-
-                self.cog.currently_serving.pop(
-                    self.dept,
-                    None
-                )
+                if interaction.user.id != thread.recipient.id:
+                    return await interaction.response.send_message(
+                        "Only the ticket recipient can use these buttons.",
+                        ephemeral=True
+                    )
 
                 try:
-                    await self.thread.close(
-                        closer=interaction.cog.bot.user
-                    )
-
-                    await self.cog.update_department_queue(
-                        self.dept
-                    )
-
                     await interaction.response.send_message(
-                        "✅ Ticket closed successfully.",
+                        "Your ticket will now be closed.",
                         ephemeral=True
                     )
 
-                except Exception as e:
-                    await interaction.response.send_message(
-                        f"❌ Failed to close ticket:\n{e}",
-                        ephemeral=True
-                    )
+                    await thread.close(closer=cog.bot.user)
+
+                except Exception as error:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(
+                            f"Failed to close the ticket: {error}",
+                            ephemeral=True
+                        )
 
                 self.stop()
 
             @discord.ui.button(
                 label="Deny & Stay Open",
-                style=discord.ButtonStyle.red
+                style=discord.ButtonStyle.danger
             )
             async def deny(
                 self,
                 interaction: discord.Interaction,
                 button: Button
             ):
+                if interaction.user.id != thread.recipient.id:
+                    return await interaction.response.send_message(
+                        "Only the ticket recipient can use these buttons.",
+                        ephemeral=True
+                    )
+
                 await interaction.response.send_message(
-                    "❌ Close request denied.",
+                    "Your ticket will remain open.",
                     ephemeral=True
                 )
 
                 self.stop()
 
+            async def on_timeout(self):
+                for item in self.children:
+                    item.disabled = True
+
+                # The original message is optional; timeout simply
+                # prevents the buttons from being used again.
+
         embed = discord.Embed(
             title="Ticket Close Request",
             description=(
-                "A member of the **Ventro Studios** "
-                "support team has requested to\n"
-                "**close your ticket.**\n\n"
-
-                "=================\n\n"
-
-                f"👤 **Requested By**\n"
-                f"{ctx.author.mention} "
-                f"— {ctx.author.name}\n\n"
-
-                "=================\n\n"
-
-                "- If your issue persists click "
-                "**Deny & Stay Open**\n"
-
-                "- If resolved click "
-                "**Accept & Close**\n"
-
-                "- This request expires in 5 minutes.\n\n"
-
-                "=================\n\n"
-
-                "Thank you for choosing "
-                "**Ventro Studios.**"
+                "The support team believes your enquiry may be resolved.\n\n"
+                "Select **Accept & Close** if your issue is resolved, "
+                "or **Deny & Stay Open** if you still need help.\n\n"
+                "This request expires in 5 minutes."
             ),
-            color=self.color
-        )
-
-        embed.set_thumbnail(
-            url=ctx.author.display_avatar.url
+            color=EMBED_COLOUR
         )
 
         embed.set_footer(
-            text="Ventro Studios • This request expires in 5 minutes"
+            text="Eastlight Primary School • Support"
         )
 
-        await thread.recipient.send(
-            embed=embed,
-            view=CloseView(self, thread, dept)
+        await self.notify_recipient(
+            thread,
+            embed
         )
+
+        # Send the view with the embed directly to the recipient.
+        try:
+            await thread.recipient.send(
+                embed=embed,
+                view=CloseView()
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            await ctx.send(
+                "❌ Could not send the close request to the recipient."
+            )
+            return
 
         await ctx.message.add_reaction("✅")
 
 
 async def setup(bot):
-    await bot.add_cog(VentroStudios(bot))
+    await bot.add_cog(EastlightModmail(bot))
