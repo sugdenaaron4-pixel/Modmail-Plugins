@@ -31,6 +31,7 @@ DEPARTMENT_CATEGORIES = {
     "01": 1562212040582373376,  # General Enquiries
     "02": 1562212125860958309,  # Careers
     "03": 1562212854189264986,  # Legal & Abuse
+    "04": 0,  # Development Enquiries — set this to its Discord category ID
 }
 
 # Optional individual Careers branch categories.
@@ -49,6 +50,7 @@ DEPARTMENTS = {
     "01": "General Enquiries",
     "02": "Careers",
     "03": "Legal & Abuse",
+    "04": "Development Enquiries",
 }
 
 CAREER_BRANCHES = {
@@ -62,6 +64,7 @@ AVERAGE_HANDLE_TIME = {
     "01": 5,
     "02": 8,
     "03": 10,
+    "04": 8,
 }
 
 DEPARTMENT_ALIASES = {
@@ -81,6 +84,13 @@ DEPARTMENT_ALIASES = {
     "legal": "03",
     "abuse": "03",
     "legal & abuse": "03",
+
+    "04": "04",
+    "development": "04",
+    "development enquiry": "04",
+    "development enquiries": "04",
+    "development inquiry": "04",
+    "development inquiries": "04",
 }
 
 BRANCH_ALIASES = {
@@ -271,7 +281,8 @@ class EastlightModmail(commands.Cog):
                 "with the corresponding number.\n\n"
                 "**01** — General Enquiries\n"
                 "**02** — Careers\n"
-                "**03** — Legal & Abuse\n\n"
+                "**03** — Legal & Abuse\n"
+                "**04** — Development Enquiries\n\n"
                 "For Careers applications, you will then be asked "
                 "to select a team."
             ),
@@ -323,6 +334,10 @@ class EastlightModmail(commands.Cog):
             "03": (
                 "Your ticket has been placed in **Legal & Abuse**.\n\n"
                 "A suitable team member will review your enquiry."
+            ),
+            "04": (
+                "Your ticket has been placed in **Development Enquiries**.\n\n"
+                "The development team will review your enquiry."
             ),
         }
 
@@ -482,6 +497,31 @@ class EastlightModmail(commands.Cog):
     ):
         # Staff replies do not select departments or branches.
         if from_mod:
+            return
+
+        # Once a department/team has been selected, users cannot send
+        # further replies until a staff member claims the ticket.
+        # Career branch selection remains allowed while it is pending.
+        if (
+            thread.id in self.ticket_departments
+            and thread.id not in self.claimed_tickets
+            and thread.id not in self.pending_careers
+        ):
+            try:
+                await message.delete()
+            except (AttributeError, discord.Forbidden, discord.HTTPException):
+                pass
+
+            embed = discord.Embed(
+                title="Please Wait for a Support Agent",
+                description=(
+                    "Your department has been selected, but your ticket "
+                    "has not been claimed yet. You can send messages once "
+                    "a member of staff claims your ticket."
+                ),
+                color=EMBED_COLOUR
+            )
+            await self.notify_recipient(thread, embed)
             return
 
         # First response: department selection.
@@ -798,14 +838,15 @@ class EastlightModmail(commands.Cog):
                 "**Usage:** `?transfer <department>`\n"
                 "`01` General Enquiries\n"
                 "`02` Careers\n"
-                "`03` Legal & Abuse"
+                "`03` Legal & Abuse\n"
+                "`04` Development Enquiries"
             )
 
         department_id = self.normalize_department(department)
 
         if department_id is None:
             return await ctx.send(
-                "❌ Invalid department. Use `01`, `02`, or `03`."
+                "❌ Invalid department. Use `01`, `02`, `03`, or `04`."
             )
 
         old_department = self.ticket_departments.get(thread.id)
