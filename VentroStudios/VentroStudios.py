@@ -31,7 +31,7 @@ DEPARTMENT_CATEGORIES = {
     "01": 1562212040582373376,  # General Enquiries
     "02": 1562212125860958309,  # Careers
     "03": 1562212854189264986,  # Legal & Abuse
-    "04": 0,  # Development Enquiries — set this to its Discord category ID
+    "04": 1562520490545774714,  # Development Enquiries — set this to its Discord category ID
 }
 
 # Optional individual Careers branch categories.
