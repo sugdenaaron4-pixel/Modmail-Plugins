@@ -125,7 +125,7 @@ BRANCH_ALIASES = {
 # MODMAIL COG
 # ============================================================
 
-class EastlightModmail(commands.Cog)
+class EastlightModmail(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
