@@ -262,32 +262,41 @@ class EastlightModmail(commands.Cog):
                 )
 
     async def move_ticket(self, thread, department_id, branch=None):
+        """Move a ticket and report whether Discord confirmed the move."""
         category_id = DEPARTMENT_CATEGORIES.get(department_id)
 
         if department_id == "02" and branch:
-            branch_category_id = CAREER_BRANCH_CATEGORIES.get(
-                branch, 0
+            # A branch-specific category takes priority over the general
+            # Careers category.
+            category_id = CAREER_BRANCH_CATEGORIES.get(branch) or category_id
+
+        category = self.get_category(thread.channel.guild, category_id)
+        moved = False
+
+        if category is None:
+            print(
+                f"[Eastlight Modmail] Cannot move ticket {thread.id}: "
+                f"category ID {category_id!r} for department "
+                f"{department_id} / branch {branch!r} was not found "
+                "or is not a Discord category."
             )
-
-            if branch_category_id:
-                category_id = branch_category_id
-
-        category = self.get_category(
-            thread.channel.guild,
-            category_id
-        )
-
-        if category is not None:
+        else:
             try:
-                await thread.channel.edit(category=category)
+                await thread.channel.edit(
+                    category=category,
+                    reason=f"Modmail department transfer: {department_id}"
+                    + (f" / {branch}" if branch else "")
+                )
+                moved = True
             except (discord.Forbidden, discord.HTTPException) as error:
                 print(
                     f"[Eastlight Modmail] Could not move ticket "
-                    f"{thread.id}: {error}"
+                    f"{thread.id} to category {category.id}: {error}"
                 )
 
-        # Apply role permissions even if the category ID is not configured.
+        # Keep the department access controls updated even if the move fails.
         await self.apply_department_role_permissions(thread, department_id)
+        return moved
 
     def can_manage_application_status(self, member):
         if not isinstance(member, discord.Member):
@@ -880,7 +889,7 @@ class EastlightModmail(commands.Cog):
     # ========================================================
 
     @commands.command(name="transfer")
-    async def transfer_ticket(self, ctx, *, department=None):
+    async def transfer_ticket(self, ctx, department=None, branch=None):
         thread = await self.find_thread(ctx.channel)
 
         if thread is None:
@@ -890,53 +899,65 @@ class EastlightModmail(commands.Cog):
 
         if not department:
             return await ctx.send(
-                "**Usage:** `?transfer <department>`\n"
-                "`01` General Enquiries\n"
-                "`02` Careers\n"
-                "`03` Legal & Abuse\n"
-                "`04` Development Enquiries"
+                "**Usage:** `-transfer <department> [branch]`\\n"
+                "`01` — General Enquiries\\n"
+                "`02 <LLT|MLT|SLT|SITE>` — Careers (branch required)\\n"
+                "`03` — Legal & Abuse\\n"
+                "`04` — Development Enquiries\\n\\n"
+                "**Example:** `-transfer 02 SLT`"
             )
 
         department_id = self.normalize_department(department)
-
         if department_id is None:
             return await ctx.send(
                 "❌ Invalid department. Use `01`, `02`, `03`, or `04`."
             )
 
+        branch_code = None
+        if department_id == "02":
+            if not branch:
+                return await ctx.send(
+                    "❌ A Careers branch is required. Use "
+                    "`-transfer 02 LLT`, `-transfer 02 MLT`, "
+                    "`-transfer 02 SLT`, or `-transfer 02 SITE`."
+                )
+            branch_code = self.normalize_branch(branch)
+            if branch_code is None:
+                return await ctx.send(
+                    "❌ Invalid Careers branch. Use `LLT`, `MLT`, "
+                    "`SLT`, or `SITE`."
+                )
+        elif branch is not None:
+            return await ctx.send(
+                "❌ Only Careers transfers use a branch. Example: "
+                "`-transfer 03`."
+            )
+
         old_department = self.ticket_departments.get(thread.id)
 
+        self.pending_careers.discard(thread.id)
+        self.ticket_departments[thread.id] = department_id
+        self.ticket_branches.pop(thread.id, None)
+        if branch_code:
+            self.ticket_branches[thread.id] = branch_code
+
+        self.claimed_tickets.discard(thread.id)
+        self.ticket_claimers.pop(thread.id, None)
+
+        moved = await self.move_ticket(thread, department_id, branch_code)
+
+        await self.send_department_embed(thread, department_id)
         if department_id == "02":
-            self.pending_careers.add(thread.id)
-            self.ticket_departments.pop(thread.id, None)
-            self.ticket_branches.pop(thread.id, None)
-
-            self.claimed_tickets.discard(thread.id)
-            self.ticket_claimers.pop(thread.id, None)
-
-            await self.move_ticket(thread, "02")
-            await self.send_career_branch_embed(thread)
-
-            await ctx.send(
-                "✅ Ticket transferred to Careers. The user must "
-                "select an available branch."
-            )
-
+            destination = f"Careers — {CAREER_BRANCHES[branch_code]}"
         else:
-            self.pending_careers.discard(thread.id)
-            self.ticket_departments[thread.id] = department_id
-            self.ticket_branches.pop(thread.id, None)
+            destination = DEPARTMENTS[department_id]
 
-            self.claimed_tickets.discard(thread.id)
-            self.ticket_claimers.pop(thread.id, None)
-
-            await self.move_ticket(thread, department_id)
-            await self.send_department_embed(thread, department_id)
-
-            await ctx.send(
-                f"✅ Ticket transferred to **"
-                f"{DEPARTMENTS[department_id]}**."
-            )
+        warning = "" if moved else (
+            "\\n⚠️ Ticket details were updated, but Discord did not confirm "
+            "the channel move. Check the category ID and the bot's "
+            "**Manage Channels** permission."
+        )
+        await ctx.send(f"✅ Ticket transferred to **{destination}**.{warning}")
 
         if old_department:
             self.currently_serving.pop(old_department, None)
@@ -1066,3 +1087,4 @@ class EastlightModmail(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(EastlightModmail(bot))
+
